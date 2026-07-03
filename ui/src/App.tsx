@@ -752,28 +752,6 @@ export default function App() {
   const graphReady = visibleGraphNodes.length > 0;
   const summary = useMemo(() => summarizeKinds(nodes), [nodes]);
 
-  const headerStatusText = useMemo(() => {
-    if (!snapshot) {
-      if (status === 'connected') {
-        return 'Connected; syncing Kubernetes config cache';
-      }
-      if (status === 'connecting') {
-        return 'Opening topology stream';
-      }
-      return 'Waiting for topology';
-    }
-    if (!namespace) {
-      return 'Select a namespace to render ingress traffic paths';
-    }
-    if (graphReady) {
-      return `${routes.length} ingress traffic paths in ${namespace}`;
-    }
-    if (hasTopology) {
-      return `No ingress traffic paths found in ${namespace}`;
-    }
-    return 'Snapshot received: 0 supported objects';
-  }, [graphReady, hasTopology, namespace, routes.length, snapshot, status]);
-
   const emptyStateTitle = useMemo(() => {
     if (!hasSnapshot) {
       return status === 'connected' ? 'Connected; waiting for first Kubernetes config snapshot' : 'Waiting for topology stream';
@@ -817,7 +795,7 @@ export default function App() {
         <div className="flex min-h-10 flex-wrap items-center gap-3">
           <div className="mr-2 min-w-[210px]">
             <div className="text-sm font-black tracking-tight">NorthScope</div>
-            <div className="text-[11px] font-medium text-slate-500">{headerStatusText}</div>
+            <div className="text-[11px] font-medium text-slate-500">Kubernetes ingress traffic path debugger</div>
           </div>
           <select
             value={namespace}
