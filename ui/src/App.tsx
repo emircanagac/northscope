@@ -455,7 +455,8 @@ export default function App() {
               </option>
             ))}
           </select>
-          <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-500">Cluster totals</span>
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">Controllers {summary.controllers}</span>
             <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Ingress {summary.ingresses}</span>
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">Services {summary.services}</span>
