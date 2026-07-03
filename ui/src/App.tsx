@@ -40,10 +40,6 @@ interface RouteItem {
   backend: string;
   status: string;
   severity: string;
-  diagnosis: string;
-  nextStep: string;
-  kubectl: string;
-  confidence: string;
 }
 
 interface NamespaceTrafficGraph {
@@ -214,7 +210,8 @@ function routeHost(route: TopologyNode): string {
   if (route.data.properties?.defaultBackend === 'true') {
     return 'default backend';
   }
-  return route.data.properties?.host || '*';
+  const rawHost = route.data.properties?.host || '*';
+  return rawHost.trim().split(/\s+/)[0].split('/')[0] || '*';
 }
 
 function routePath(route: TopologyNode): string {
@@ -240,10 +237,6 @@ function routeItemFromNode(route: TopologyNode, ingress: TopologyNode, hostLaneI
     backend: props.backend ?? (service ? nodeDisplayName(service) : 'missing service'),
     status: String(route.data.status ?? 'Unknown'),
     severity: props.severity ?? 'unknown',
-    diagnosis: props.diagnosis ?? 'No diagnosis available yet.',
-    nextStep: props.nextStep ?? 'Inspect the Kubernetes objects on this route.',
-    kubectl: props.kubectl ?? '',
-    confidence: props.confidence ?? 'Configured',
   };
 }
 
@@ -337,8 +330,8 @@ function laneNode(node: TopologyNode, laneId: string): TopologyNode {
   };
 }
 
-function hostLaneId(ingress: TopologyNode, host: string): string {
-  return `${ingress.id}:host:${safeVisualId(host)}`;
+function hostLaneId(namespace: string, host: string): string {
+  return `host:${namespace}:${safeVisualId(host)}`;
 }
 
 function syntheticHostNode(namespace: string, host: string): TopologyNode {
@@ -501,7 +494,7 @@ function buildNamespaceTrafficGraph(
       const service = serviceEdge ? nodeById.get(serviceEdge.target) : undefined;
       const displayService = service ?? syntheticMissingServiceNode(namespace, route);
       const host = routeHost(route);
-      const routeHostLaneId = hostLaneId(ingress, host);
+      const routeHostLaneId = hostLaneId(namespace, host);
       routeItems.push(routeItemFromNode(route, ingress, routeHostLaneId, displayService));
       routeRecords.push({ route, serviceEdge, service, displayService, host, hostLaneId: routeHostLaneId });
     }
@@ -744,8 +737,8 @@ export default function App() {
 
       <main className="flex min-h-0 flex-1">
         {graphReady ? (
-          <aside className="flex w-[340px] shrink-0 flex-col border-r border-slate-200 bg-white">
-            <section className="flex min-h-0 flex-[0.9] flex-col border-b border-slate-200">
+          <aside className="flex w-[320px] shrink-0 flex-col border-r border-slate-200 bg-white">
+            <section className="flex min-h-0 flex-1 flex-col">
               <div className="shrink-0 px-4 py-3">
                 <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Ingress routes</div>
                 <div className="mt-1 text-sm font-semibold text-slate-900">
@@ -757,7 +750,6 @@ export default function App() {
                   <div key={group.id}>
                     <div className="mb-1.5 px-1">
                       <div className="truncate text-[12px] font-black text-slate-800">{group.host}</div>
-                      <div className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-400">{group.ingress}</div>
                     </div>
                     <div className="space-y-2">
                       {group.routes.map((route) => (
@@ -781,52 +773,6 @@ export default function App() {
                 ))}
               </div>
             </section>
-
-            {selectedRoute ? (
-              <section className="flex min-h-0 flex-1 flex-col">
-                <div className="shrink-0 border-b border-slate-200 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-black text-slate-950">{selectedRoute.name}</div>
-                      <div className="mt-1 truncate text-xs font-semibold text-slate-500">{selectedRoute.backend}</div>
-                    </div>
-                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${severityClass(selectedRoute.severity)}`}>
-                      {selectedRoute.status}
-                    </span>
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 overflow-auto p-3">
-                  <div className={`rounded-md border p-3 text-xs font-semibold leading-5 ${severityClass(selectedRoute.severity)}`}>
-                    {selectedRoute.diagnosis}
-                  </div>
-
-                  <div className="mt-3">
-                    <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Look here first</div>
-                    <p className="mt-1.5 text-sm font-medium leading-5 text-slate-700">{selectedRoute.nextStep}</p>
-                  </div>
-
-                  <details className="mt-3 rounded-md border border-slate-200 bg-slate-50">
-                    <summary className="cursor-pointer px-3 py-2 text-[11px] font-black uppercase tracking-wide text-slate-600">
-                      Suggested kubectl
-                    </summary>
-                    <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-b-md bg-slate-950 p-3 text-xs font-semibold leading-5 text-slate-100">
-                      {selectedRoute.kubectl || 'kubectl describe ingress ...'}
-                    </pre>
-                  </details>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
-                    <div className="rounded-md bg-slate-100 px-3 py-2">
-                      <div className="font-black uppercase text-slate-500">Mode</div>
-                      <div className="mt-1 text-slate-900">Configured path</div>
-                    </div>
-                    <div className="rounded-md bg-slate-100 px-3 py-2">
-                      <div className="font-black uppercase text-slate-500">Confidence</div>
-                      <div className="mt-1 text-slate-900">{selectedRoute.confidence}</div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            ) : null}
           </aside>
         ) : null}
 
