@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 
 export type NodeKind =
+  | 'F5'
   | 'Internet'
   | 'DNS'
   | 'Gateway'

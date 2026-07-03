@@ -11,6 +11,15 @@ function kindTone(kind: NodeKind): {
   badge: string;
   initials: string;
 } {
+  if (kind === 'F5') {
+    return {
+      card: 'border-slate-400 bg-white shadow-slate-200',
+      icon: 'bg-slate-900 text-white',
+      badge: 'bg-slate-900 text-white',
+      initials: 'F5',
+    };
+  }
+
   if (kind === 'Ingress') {
     return {
       card: 'border-blue-300 bg-blue-50 shadow-blue-100',
