@@ -33,6 +33,9 @@ interface RouteItem {
   ingressId: string;
   serviceId: string;
   name: string;
+  host: string;
+  path: string;
+  hostLaneId: string;
   ingress: string;
   backend: string;
   status: string;
@@ -50,8 +53,19 @@ interface NamespaceTrafficGraph {
 }
 
 interface RouteGroup {
+  id: string;
+  host: string;
   ingress: string;
   routes: RouteItem[];
+}
+
+interface HostRouteRecord {
+  route: TopologyNode;
+  serviceEdge?: TopologyEdge;
+  service?: TopologyNode;
+  displayService: TopologyNode;
+  host: string;
+  hostLaneId: string;
 }
 
 function statusLabel(status: string, hasSnapshot: boolean): string {
@@ -154,16 +168,17 @@ function syntheticControllerNode(namespace: string): TopologyNode {
 }
 
 function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
-  const columnOrder = ['f5', 'nodeport', 'controller', 'ingress', 'route', 'service', 'pod', 'node'];
+  const columnOrder = ['f5', 'nodeport', 'controller', 'ingress', 'dns', 'route', 'service', 'pod', 'node'];
   const columnX: Record<string, number> = {
     f5: 0,
-    nodeport: 300,
-    controller: 620,
-    ingress: 940,
-    route: 1260,
-    service: 1600,
-    pod: 1940,
-    node: 2280,
+    nodeport: 280,
+    controller: 580,
+    ingress: 880,
+    dns: 1180,
+    route: 1480,
+    service: 1800,
+    pod: 2120,
+    node: 2440,
   };
   const columns = new Map<string, TopologyNode[]>();
 
@@ -195,13 +210,32 @@ function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
   });
 }
 
-function routeItemFromNode(route: TopologyNode, ingress: TopologyNode, service?: TopologyNode): RouteItem {
+function routeHost(route: TopologyNode): string {
+  if (route.data.properties?.defaultBackend === 'true') {
+    return 'default backend';
+  }
+  return route.data.properties?.host || '*';
+}
+
+function routePath(route: TopologyNode): string {
+  if (route.data.properties?.defaultBackend === 'true') {
+    return 'default';
+  }
+  return route.data.properties?.path || '/';
+}
+
+function routeItemFromNode(route: TopologyNode, ingress: TopologyNode, hostLaneId: string, service?: TopologyNode): RouteItem {
   const props = route.data.properties ?? {};
+  const host = routeHost(route);
+  const path = routePath(route);
   return {
     id: route.id,
     ingressId: ingress.id,
     serviceId: service?.id ?? '',
     name: String(route.data.label ?? route.data.name),
+    host,
+    path,
+    hostLaneId,
     ingress: nodeDisplayName(ingress),
     backend: props.backend ?? (service ? nodeDisplayName(service) : 'missing service'),
     status: String(route.data.status ?? 'Unknown'),
@@ -264,30 +298,61 @@ function severityRank(severity: string): number {
 function groupRoutes(routes: RouteItem[]): RouteGroup[] {
   const groups = new Map<string, RouteItem[]>();
   for (const route of routes) {
-    groups.set(route.ingress, [...(groups.get(route.ingress) ?? []), route]);
+    groups.set(route.hostLaneId, [...(groups.get(route.hostLaneId) ?? []), route]);
   }
   return Array.from(groups.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([ingress, group]) => ({
-      ingress,
+    .sort(([, leftGroup], [, rightGroup]) => {
+      const host = leftGroup[0].host.localeCompare(rightGroup[0].host);
+      if (host !== 0) return host;
+      return leftGroup[0].ingress.localeCompare(rightGroup[0].ingress);
+    })
+    .map(([id, group]) => ({
+      id,
+      host: group[0].host,
+      ingress: group[0].ingress,
       routes: [...group].sort((left, right) => {
         const severity = severityRank(left.severity) - severityRank(right.severity);
         if (severity !== 0) return severity;
-        return left.name.localeCompare(right.name);
+        return left.path.localeCompare(right.path);
       }),
     }));
 }
 
-function laneNode(node: TopologyNode, routeId: string): TopologyNode {
+function safeVisualId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+}
+
+function laneNode(node: TopologyNode, laneId: string): TopologyNode {
   return {
     ...node,
-    id: `${node.id}:lane:${routeId}`,
+    id: `${node.id}:lane:${laneId}`,
     position: { ...node.position },
     data: {
       ...node.data,
       properties: {
         ...(node.data.properties ?? {}),
-        visualLane: routeId,
+        visualLane: laneId,
+      },
+    },
+  };
+}
+
+function hostLaneId(ingress: TopologyNode, host: string): string {
+  return `${ingress.id}:host:${safeVisualId(host)}`;
+}
+
+function syntheticHostNode(namespace: string, host: string): TopologyNode {
+  return {
+    id: `visual:dns:${namespace}:${safeVisualId(host)}`,
+    type: 'northscopeNode',
+    position: { x: 0, y: 0 },
+    data: {
+      label: host,
+      kind: 'DNS',
+      name: host,
+      status: 'Host',
+      properties: {
+        role: 'Ingress host',
       },
     },
   };
@@ -353,13 +418,14 @@ function laneIdForEdge(edge: TopologyEdge): string {
   return edge.source.slice(sourceIndex + marker.length);
 }
 
-function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string): TopologyNode[] {
-  if (!selectedRouteId) {
+function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selectedHostLaneId: string): TopologyNode[] {
+  if (!selectedRouteId && !selectedHostLaneId) {
     return nodes;
   }
 
   return nodes.map((node) => {
-    const active = laneIdForNode(node) === selectedRouteId;
+    const laneId = laneIdForNode(node);
+    const active = laneId === selectedRouteId || laneId === selectedHostLaneId;
     return {
       ...node,
       style: {
@@ -371,13 +437,14 @@ function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string): Topo
   });
 }
 
-function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteId: string): TopologyEdge[] {
-  if (!selectedRouteId) {
+function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteId: string, selectedHostLaneId: string): TopologyEdge[] {
+  if (!selectedRouteId && !selectedHostLaneId) {
     return edges;
   }
 
   return edges.map((edge) => {
-    const active = laneIdForEdge(edge) === selectedRouteId;
+    const laneId = laneIdForEdge(edge);
+    const active = laneId === selectedRouteId || laneId === selectedHostLaneId;
     return {
       ...edge,
       animated: Boolean(edge.animated && active),
@@ -423,6 +490,7 @@ function buildNamespaceTrafficGraph(
     const controllerEdges = edges.filter((edge) => edge.target === ingress.id && edgeKind(edge) === 'controls');
 
     const routeEdges = edges.filter((edge) => edge.source === ingress.id && edgeKind(edge) === 'defines');
+    const routeRecords: HostRouteRecord[] = [];
     for (const routeEdge of routeEdges) {
       const route = nodeById.get(routeEdge.target);
       if (kindOf(route) !== 'route' || route?.data.namespace !== namespace) {
@@ -432,19 +500,27 @@ function buildNamespaceTrafficGraph(
       const serviceEdge = edges.find((edge) => edge.source === route.id && edgeKind(edge) === 'routes');
       const service = serviceEdge ? nodeById.get(serviceEdge.target) : undefined;
       const displayService = service ?? syntheticMissingServiceNode(namespace, route);
-      routeItems.push(routeItemFromNode(route, ingress, displayService));
+      const host = routeHost(route);
+      const routeHostLaneId = hostLaneId(ingress, host);
+      routeItems.push(routeItemFromNode(route, ingress, routeHostLaneId, displayService));
+      routeRecords.push({ route, serviceEdge, service, displayService, host, hostLaneId: routeHostLaneId });
+    }
 
-      const laneExternal = laneNode(namespaceTrafficNode(namespace), route.id);
-      const laneIngress = laneNode(ingress, route.id);
-      const laneRoute = laneNode(route, route.id);
-      const laneService = laneNode(displayService, route.id);
+    const recordsByHostLane = new Map<string, HostRouteRecord[]>();
+    for (const record of routeRecords) {
+      recordsByHostLane.set(record.hostLaneId, [...(recordsByHostLane.get(record.hostLaneId) ?? []), record]);
+    }
+
+    for (const [routeHostLaneId, hostRecords] of recordsByHostLane.entries()) {
+      const host = hostRecords[0].host;
+      const laneExternal = laneNode(namespaceTrafficNode(namespace), routeHostLaneId);
+      const laneIngress = laneNode(ingress, routeHostLaneId);
+      const laneHost = laneNode(syntheticHostNode(namespace, host), routeHostLaneId);
 
       addNode(laneExternal);
       addNode(laneIngress);
-      addNode(laneRoute);
-      addNode(laneService);
-      addEdge(laneEdge(laneIngress, laneRoute, 'defines'));
-      addEdge(laneEdge(laneRoute, laneService, serviceEdge && service ? 'routes' : 'missing'));
+      addNode(laneHost);
+      addEdge(laneEdge(laneIngress, laneHost, 'defines'));
 
       const controllers = controllerEdges
         .map((edge) => nodeById.get(edge.source))
@@ -452,12 +528,12 @@ function buildNamespaceTrafficGraph(
       const controllersForLane = controllers.length > 0 ? controllers : [syntheticControllerNode(namespace)];
 
       for (const controller of controllersForLane) {
-        const laneController = laneNode(controller, route.id);
+        const laneController = laneNode(controller, routeHostLaneId);
         addNode(laneController);
         const nodePorts = pickControllerNodePorts(controller.id, nodeById, edges);
         if (nodePorts.length > 0) {
           for (const nodePort of nodePorts) {
-            const laneNodePort = laneNode(nodePort, route.id);
+            const laneNodePort = laneNode(nodePort, routeHostLaneId);
             addNode(laneNodePort);
             addEdge(laneEdge(laneExternal, laneNodePort, 'traffic'));
             addEdge(laneEdge(laneNodePort, laneController, 'forwards'));
@@ -468,27 +544,37 @@ function buildNamespaceTrafficGraph(
         addEdge(laneEdge(laneController, laneIngress, 'controls'));
       }
 
-      const podEdges = edges.filter(
-        (edge) => edge.source === displayService.id && ['selects', 'endpointslice'].includes(edgeKind(edge)),
-      );
-      for (const podEdge of podEdges) {
-        const pod = nodeById.get(podEdge.target);
-        if (kindOf(pod) !== 'pod' || pod?.data.namespace !== namespace) {
-          continue;
-        }
-        const lanePod = laneNode(pod, route.id);
-        addNode(lanePod);
-        addEdge(laneEdge(laneService, lanePod, edgeKind(podEdge)));
+      for (const record of hostRecords) {
+        const laneRoute = laneNode(record.route, record.route.id);
+        const laneService = laneNode(record.displayService, record.route.id);
 
-        const nodeHostEdges = edges.filter((edge) => edge.target === pod.id && edgeKind(edge) === 'hosts');
-        for (const nodeHostEdge of nodeHostEdges) {
-          const node = nodeById.get(nodeHostEdge.source);
-          if (!node || kindOf(node) !== 'node') {
+        addNode(laneRoute);
+        addNode(laneService);
+        addEdge(laneEdge(laneHost, laneRoute, 'defines'));
+        addEdge(laneEdge(laneRoute, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
+
+        const podEdges = edges.filter(
+          (edge) => edge.source === record.displayService.id && ['selects', 'endpointslice'].includes(edgeKind(edge)),
+        );
+        for (const podEdge of podEdges) {
+          const pod = nodeById.get(podEdge.target);
+          if (kindOf(pod) !== 'pod' || pod?.data.namespace !== namespace) {
             continue;
           }
-          const laneKubeNode = laneNode(node, route.id);
-          addNode(laneKubeNode);
-          addEdge(laneEdge(lanePod, laneKubeNode, 'runs_on'));
+          const lanePod = laneNode(pod, record.route.id);
+          addNode(lanePod);
+          addEdge(laneEdge(laneService, lanePod, edgeKind(podEdge)));
+
+          const nodeHostEdges = edges.filter((edge) => edge.target === pod.id && edgeKind(edge) === 'hosts');
+          for (const nodeHostEdge of nodeHostEdges) {
+            const node = nodeById.get(nodeHostEdge.source);
+            if (!node || kindOf(node) !== 'node') {
+              continue;
+            }
+            const laneKubeNode = laneNode(node, record.route.id);
+            addNode(laneKubeNode);
+            addEdge(laneEdge(lanePod, laneKubeNode, 'runs_on'));
+          }
         }
       }
     }
@@ -543,12 +629,12 @@ export default function App() {
   const routeGroups = useMemo(() => groupRoutes(routes), [routes]);
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
   const focusedGraphNodes = useMemo(
-    () => focusNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? ''),
-    [selectedRoute?.id, visibleGraphNodes],
+    () => focusNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
+    [selectedRoute?.hostLaneId, selectedRoute?.id, visibleGraphNodes],
   );
   const focusedGraphEdges = useMemo(
-    () => focusEdgesByRoute(visibleGraphEdges, selectedRoute?.id ?? ''),
-    [selectedRoute?.id, visibleGraphEdges],
+    () => focusEdgesByRoute(visibleGraphEdges, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
+    [selectedRoute?.hostLaneId, selectedRoute?.id, visibleGraphEdges],
   );
   const hasSnapshot = Boolean(snapshot);
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
@@ -663,14 +749,15 @@ export default function App() {
               <div className="shrink-0 px-4 py-3">
                 <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Ingress routes</div>
                 <div className="mt-1 text-sm font-semibold text-slate-900">
-                  {routes.length} configured path{routes.length === 1 ? '' : 's'}
+                  {routeGroups.length} host{routeGroups.length === 1 ? '' : 's'} / {routes.length} path{routes.length === 1 ? '' : 's'}
                 </div>
               </div>
               <div className="min-h-0 flex-1 space-y-3 overflow-auto px-3 pb-3">
                 {routeGroups.map((group) => (
-                  <div key={group.ingress}>
-                    <div className="mb-1.5 truncate text-[10px] font-black uppercase tracking-wide text-slate-500">
-                      {group.ingress}
+                  <div key={group.id}>
+                    <div className="mb-1.5 px-1">
+                      <div className="truncate text-[12px] font-black text-slate-800">{group.host}</div>
+                      <div className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-400">{group.ingress}</div>
                     </div>
                     <div className="space-y-2">
                       {group.routes.map((route) => (
@@ -681,7 +768,7 @@ export default function App() {
                           className={routeButtonClass(route, route.id === selectedRoute?.id)}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate text-sm font-black">{route.name}</span>
+                            <span className="min-w-0 truncate text-sm font-black">{route.path}</span>
                             <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700">
                               {route.status}
                             </span>
