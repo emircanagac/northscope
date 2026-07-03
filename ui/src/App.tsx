@@ -117,15 +117,16 @@ function syntheticControllerNode(namespace: string): TopologyNode {
 }
 
 function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
-  const columnOrder = ['f5', 'controller', 'ingress', 'route', 'service', 'pod', 'node'];
+  const columnOrder = ['f5', 'nodeport', 'controller', 'ingress', 'route', 'service', 'pod', 'node'];
   const columnX: Record<string, number> = {
     f5: 0,
-    controller: 300,
-    ingress: 620,
-    route: 940,
-    service: 1280,
-    pod: 1620,
-    node: 1960,
+    nodeport: 300,
+    controller: 620,
+    ingress: 940,
+    route: 1260,
+    service: 1600,
+    pod: 1940,
+    node: 2280,
   };
   const columns = new Map<string, TopologyNode[]>();
 
@@ -278,7 +279,21 @@ function buildNamespaceTrafficGraph(
         continue;
       }
       addNode(controller);
-      addEdge(syntheticEdge(f5Node.id, controllerEdge.source, 'traffic', 'F5'));
+
+      const nodePortEdges = edges.filter(
+        (edge) => edge.target === controller.id && edgeKind(edge) === 'forwards' && kindOf(nodeById.get(edge.source)) === 'nodeport',
+      );
+      if (nodePortEdges.length > 0) {
+        for (const nodePortEdge of nodePortEdges) {
+          const nodePort = nodeById.get(nodePortEdge.source);
+          addNode(nodePort);
+          addEdge(syntheticEdge(f5Node.id, nodePortEdge.source, 'traffic', 'F5'));
+          addEdge(nodePortEdge);
+        }
+      } else {
+        addEdge(syntheticEdge(f5Node.id, controllerEdge.source, 'traffic', 'F5'));
+      }
+
       addEdge(controllerEdge);
     }
 
@@ -479,12 +494,12 @@ export default function App() {
 
       {graphReady ? (
         <>
-          <aside className="absolute bottom-4 left-4 top-[92px] z-10 flex w-[360px] flex-col rounded-md border border-slate-200 bg-white shadow-sm">
+          <aside className="absolute left-4 top-[92px] z-10 flex max-h-[42vh] w-[320px] flex-col rounded-md border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-4 py-3">
               <div className="text-xs font-black uppercase tracking-wide text-slate-500">Ingress routes</div>
               <div className="mt-1 text-sm font-semibold text-slate-900">{routes.length} configured path{routes.length === 1 ? '' : 's'}</div>
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2.5">
               {routes.map((route) => (
                 <button
                   key={route.id}
@@ -506,7 +521,7 @@ export default function App() {
           </aside>
 
           {selectedRoute ? (
-            <aside className="absolute bottom-4 right-4 top-[92px] z-10 flex w-[380px] flex-col rounded-md border border-slate-200 bg-white shadow-sm">
+            <aside className="absolute bottom-4 right-4 z-10 flex max-h-[52vh] w-[340px] flex-col rounded-md border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-200 px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -518,24 +533,26 @@ export default function App() {
                   </span>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-auto p-4">
-                <div className={`rounded-md border p-3 text-sm font-semibold leading-5 ${severityClass(selectedRoute.severity)}`}>
+              <div className="min-h-0 flex-1 overflow-auto p-3">
+                <div className={`rounded-md border p-3 text-xs font-semibold leading-5 ${severityClass(selectedRoute.severity)}`}>
                   {selectedRoute.diagnosis}
                 </div>
 
-                <div className="mt-4">
+                <div className="mt-3">
                   <div className="text-xs font-black uppercase tracking-wide text-slate-500">Look here first</div>
-                  <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{selectedRoute.nextStep}</p>
+                  <p className="mt-1.5 text-sm font-medium leading-5 text-slate-700">{selectedRoute.nextStep}</p>
                 </div>
 
-                <div className="mt-4">
-                  <div className="text-xs font-black uppercase tracking-wide text-slate-500">Suggested kubectl</div>
-                  <pre className="mt-2 whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 text-xs font-semibold leading-5 text-slate-100">
+                <details className="mt-3 rounded-md border border-slate-200 bg-slate-50">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-600">
+                    Suggested kubectl
+                  </summary>
+                  <pre className="whitespace-pre-wrap break-words rounded-b-md bg-slate-950 p-3 text-xs font-semibold leading-5 text-slate-100">
                     {selectedRoute.kubectl || 'kubectl describe ingress ...'}
                   </pre>
-                </div>
+                </details>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
                   <div className="rounded-md bg-slate-100 px-3 py-2">
                     <div className="font-black uppercase text-slate-500">Mode</div>
                     <div className="mt-1 text-slate-900">Configured path</div>

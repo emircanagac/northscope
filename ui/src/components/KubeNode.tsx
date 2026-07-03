@@ -135,7 +135,22 @@ function statusBadgeClass(status: string, hasError: boolean): string {
   return 'bg-white/80 text-slate-600';
 }
 
+function shouldShowStatus(data: TopologyNode['data'], status: string): boolean {
+  if (data.kind === 'Controller') {
+    return status === 'Inferred' || isErrorStatus(status);
+  }
+  return Boolean(status && status !== 'Unknown');
+}
+
 function portSummary(data: TopologyNode['data']): string | null {
+  if (data.kind === 'Pod') {
+    return data.properties?.podIP ? `podIP ${data.properties.podIP}` : null;
+  }
+
+  if (data.kind === 'Controller') {
+    return data.properties?.controller ?? data.properties?.className ?? null;
+  }
+
   if (data.properties?.ports) {
     return data.properties.ports;
   }
@@ -191,6 +206,7 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
   const hasError = isErrorStatus(status);
   const tone = kindTone(data.kind);
   const summaryLine = portSummary(data);
+  const showStatus = shouldShowStatus(data, status);
 
   return (
     <div
@@ -215,18 +231,21 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
           {tone.initials}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <span className={cx('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase', tone.badge)}>
               {data.kind}
             </span>
-            <span
-              className={cx(
-                'rounded-full px-2 py-0.5 text-[10px] font-bold',
-                statusBadgeClass(status, hasError),
-              )}
-            >
-              {status}
-            </span>
+            {showStatus ? (
+              <span
+                title={status}
+                className={cx(
+                  'max-w-[112px] truncate rounded-full px-2 py-0.5 text-[10px] font-bold',
+                  statusBadgeClass(status, hasError),
+                )}
+              >
+                {status}
+              </span>
+            ) : null}
           </div>
           <div className="mt-2 line-clamp-3 break-words text-sm font-bold leading-tight text-slate-950">{data.name}</div>
           {data.namespace ? <div className="mt-1 truncate text-xs font-medium text-slate-500">{data.namespace}</div> : null}
