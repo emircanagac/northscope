@@ -172,19 +172,33 @@ function nodeColumn(node: TopologyNode): string {
   return kind;
 }
 
-function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
-  const columnOrder = ['f5', 'nodeport', 'controller', 'ingress', 'dns', 'route', 'service', 'pod', 'node'];
-  const columnX: Record<string, number> = {
-    f5: 0,
-    nodeport: 280,
-    controller: 580,
-    ingress: 880,
-    dns: 1180,
-    route: 1480,
-    service: 1800,
-    pod: 2120,
-    node: 2440,
-  };
+function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): TopologyNode[] {
+  const columnOrder =
+    mode === 'simple'
+      ? ['f5', 'nodeport', 'controller', 'ingress', 'service', 'pod']
+      : ['f5', 'nodeport', 'controller', 'ingress', 'dns', 'route', 'service', 'pod', 'node'];
+  const columnX: Record<string, number> =
+    mode === 'simple'
+      ? {
+          f5: 0,
+          nodeport: 240,
+          controller: 500,
+          ingress: 760,
+          service: 1020,
+          pod: 1280,
+        }
+      : {
+          f5: 0,
+          nodeport: 280,
+          controller: 580,
+          ingress: 880,
+          dns: 1180,
+          route: 1480,
+          service: 1800,
+          pod: 2120,
+          node: 2440,
+        };
+  const rowGap = mode === 'simple' ? 190 : 230;
   const columns = new Map<string, TopologyNode[]>();
 
   for (const node of nodes) {
@@ -209,7 +223,7 @@ function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
       ...node,
       position: {
         x: columnX[column],
-        y: rowIndex * 230,
+        y: rowIndex * rowGap,
       },
     };
   });
@@ -654,7 +668,7 @@ function buildNamespaceTrafficGraph(
   }
 
   return {
-    nodes: layoutTrafficPath(Array.from(graphNodes.values())),
+    nodes: layoutTrafficPath(Array.from(graphNodes.values()), mode),
     edges: Array.from(graphEdges.values()),
     routes: routeItems.sort((left, right) => {
       const severity = severityRank(left.severity) - severityRank(right.severity);
@@ -790,7 +804,7 @@ export default function App() {
             <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">Pods {summary.pods}</span>
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700">Nodes {summary.nodes}</span>
           </div>
-          <div className="flex h-9 overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-0.5 text-xs font-black">
+          <div className="ml-auto flex h-9 overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-0.5 text-xs font-black">
             <button
               type="button"
               onClick={() => setTopologyMode('simple')}
@@ -807,7 +821,7 @@ export default function App() {
             </button>
           </div>
           <div
-            className={`ml-auto rounded-full px-3 py-1 text-xs font-bold ${
+            className={`rounded-full px-3 py-1 text-xs font-bold ${
               status === 'connected' && hasSnapshot
                 ? 'bg-emerald-100 text-emerald-700'
                 : status === 'connecting' || (status === 'connected' && !hasSnapshot)
@@ -822,7 +836,7 @@ export default function App() {
 
       <main className="flex min-h-0 flex-1">
         {graphReady ? (
-          <aside className="flex w-[320px] shrink-0 flex-col border-r border-slate-200 bg-white">
+          <aside className="flex w-[288px] shrink-0 flex-col border-r border-slate-200 bg-white">
             <section className="flex min-h-0 flex-1 flex-col">
               <div className="shrink-0 px-4 py-3">
                 <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Ingress routes</div>
@@ -863,7 +877,7 @@ export default function App() {
 
         <section className="relative min-w-0 flex-1">
           <ReactFlow<TopologyNode, TopologyEdge>
-            key={namespace || 'none'}
+            key={`${namespace || 'none'}:${topologyMode}`}
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
