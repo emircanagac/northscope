@@ -20,7 +20,6 @@ import {
   isIngressNode,
   nodeDisplayName,
   summarizeKinds,
-  uniqueById,
 } from './topologyView';
 
 const nodeTypes = {
@@ -177,9 +176,13 @@ function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
   return nodes.map((node) => {
     const kind = kindOf(node);
     const column = kind === 'f5' || kind === 'externaledge' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
-    const columnNodes = [...(columns.get(column) ?? [])].sort((left, right) =>
-      nodeDisplayName(left).localeCompare(nodeDisplayName(right)),
-    );
+    const columnNodes = [...(columns.get(column) ?? [])].sort((left, right) => {
+      const leftLane = String(left.data.properties?.visualLane ?? '');
+      const rightLane = String(right.data.properties?.visualLane ?? '');
+      const laneOrder = leftLane.localeCompare(rightLane);
+      if (laneOrder !== 0) return laneOrder;
+      return nodeDisplayName(left).localeCompare(nodeDisplayName(right));
+    });
     const rowIndex = Math.max(0, columnNodes.findIndex((item) => item.id === node.id));
 
     return {
@@ -275,22 +278,66 @@ function groupRoutes(routes: RouteItem[]): RouteGroup[] {
     }));
 }
 
-function downloadDebugBundle(namespace: string, route: RouteItem, snapshotVersion?: number): void {
-  const bundle = {
-    tool: 'northscope',
-    generatedAt: new Date().toISOString(),
-    snapshotVersion: snapshotVersion ?? null,
-    namespace,
-    mode: 'configured-path',
-    route,
+function laneNode(node: TopologyNode, routeId: string): TopologyNode {
+  return {
+    ...node,
+    id: `${node.id}:lane:${routeId}`,
+    position: { ...node.position },
+    data: {
+      ...node.data,
+      properties: {
+        ...(node.data.properties ?? {}),
+        visualLane: routeId,
+      },
+    },
   };
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `northscope-${namespace}-${route.name.replace(/[^a-z0-9.-]+/gi, '-').toLowerCase()}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+}
+
+function laneEdge(source: TopologyNode, target: TopologyNode, kind: string): TopologyEdge {
+  return syntheticEdge(source.id, target.id, kind, edgeLabel(kind));
+}
+
+function nodePortRole(node?: TopologyNode): string {
+  const text = [
+    node?.data.name,
+    node?.data.label,
+    node?.data.properties?.servicePort,
+    node?.data.properties?.nodePort,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (/\bhttps\b/.test(text) || /\b443\b/.test(text)) return 'https';
+  if (/\bhttp\b/.test(text) || /\b80\b/.test(text)) return 'http';
+  return 'other';
+}
+
+function pickControllerNodePorts(controllerId: string, nodesById: Map<string, TopologyNode>, edges: TopologyEdge[]): TopologyNode[] {
+  const candidates = edges
+    .filter((edge) => edge.target === controllerId && edgeKind(edge) === 'forwards')
+    .map((edge) => nodesById.get(edge.source))
+    .filter((node): node is TopologyNode => kindOf(node) === 'nodeport')
+    .sort((left, right) => nodeDisplayName(left).localeCompare(nodeDisplayName(right)));
+
+  if (candidates.length <= 1) {
+    return candidates;
+  }
+
+  const byRole = new Map<string, TopologyNode>();
+  for (const node of candidates) {
+    const role = nodePortRole(node);
+    if (!byRole.has(role)) {
+      byRole.set(role, node);
+    }
+  }
+
+  const picked = ['http', 'https'].map((role) => byRole.get(role)).filter((node): node is TopologyNode => Boolean(node));
+  if (picked.length > 0) {
+    return picked;
+  }
+
+  return [candidates[0]];
 }
 
 function buildNamespaceTrafficGraph(
@@ -311,11 +358,6 @@ function buildNamespaceTrafficGraph(
   const graphNodes = new Map<string, TopologyNode>();
   const graphEdges = new Map<string, TopologyEdge>();
   const routeItems: RouteItem[] = [];
-  const f5Node = namespaceTrafficNode(namespace);
-  const fallbackController = syntheticControllerNode(namespace);
-  let fallbackControllerUsed = false;
-
-  graphNodes.set(f5Node.id, f5Node);
 
   const addNode = (node?: TopologyNode) => {
     if (node) {
@@ -327,38 +369,7 @@ function buildNamespaceTrafficGraph(
   };
 
   for (const ingress of ingressNodes) {
-    addNode(ingress);
-
     const controllerEdges = edges.filter((edge) => edge.target === ingress.id && edgeKind(edge) === 'controls');
-    if (controllerEdges.length === 0) {
-      fallbackControllerUsed = true;
-      addEdge(syntheticEdge(f5Node.id, fallbackController.id, 'traffic', 'enters'));
-      addEdge(syntheticEdge(fallbackController.id, ingress.id, 'controls', 'watches'));
-    }
-
-    for (const controllerEdge of controllerEdges) {
-      const controller = nodeById.get(controllerEdge.source);
-      if (!controller || !isControllerNode(controller)) {
-        continue;
-      }
-      addNode(controller);
-
-      const nodePortEdges = edges.filter(
-        (edge) => edge.target === controller.id && edgeKind(edge) === 'forwards' && kindOf(nodeById.get(edge.source)) === 'nodeport',
-      );
-      if (nodePortEdges.length > 0) {
-        for (const nodePortEdge of nodePortEdges) {
-          const nodePort = nodeById.get(nodePortEdge.source);
-          addNode(nodePort);
-          addEdge(syntheticEdge(f5Node.id, nodePortEdge.source, 'traffic', 'enters'));
-          addEdge(nodePortEdge);
-        }
-      } else {
-        addEdge(syntheticEdge(f5Node.id, controllerEdge.source, 'traffic', 'enters'));
-      }
-
-      addEdge(controllerEdge);
-    }
 
     const routeEdges = edges.filter((edge) => edge.source === ingress.id && edgeKind(edge) === 'defines');
     for (const routeEdge of routeEdges) {
@@ -366,19 +377,45 @@ function buildNamespaceTrafficGraph(
       if (kindOf(route) !== 'route' || route?.data.namespace !== namespace) {
         continue;
       }
-      addNode(route);
-      addEdge(routeEdge);
 
       const serviceEdge = edges.find((edge) => edge.source === route.id && edgeKind(edge) === 'routes');
       const service = serviceEdge ? nodeById.get(serviceEdge.target) : undefined;
       const displayService = service ?? syntheticMissingServiceNode(namespace, route);
-      addNode(displayService);
-      if (serviceEdge && service) {
-        addEdge(serviceEdge);
-      } else {
-        addEdge(syntheticEdge(route.id, displayService.id, 'missing', 'missing'));
-      }
       routeItems.push(routeItemFromNode(route, ingress, displayService));
+
+      const laneExternal = laneNode(namespaceTrafficNode(namespace), route.id);
+      const laneIngress = laneNode(ingress, route.id);
+      const laneRoute = laneNode(route, route.id);
+      const laneService = laneNode(displayService, route.id);
+
+      addNode(laneExternal);
+      addNode(laneIngress);
+      addNode(laneRoute);
+      addNode(laneService);
+      addEdge(laneEdge(laneIngress, laneRoute, 'defines'));
+      addEdge(laneEdge(laneRoute, laneService, serviceEdge && service ? 'routes' : 'missing'));
+
+      const controllers = controllerEdges
+        .map((edge) => nodeById.get(edge.source))
+        .filter((node): node is TopologyNode => (node ? isControllerNode(node) : false));
+      const controllersForLane = controllers.length > 0 ? controllers : [syntheticControllerNode(namespace)];
+
+      for (const controller of controllersForLane) {
+        const laneController = laneNode(controller, route.id);
+        addNode(laneController);
+        const nodePorts = pickControllerNodePorts(controller.id, nodeById, edges);
+        if (nodePorts.length > 0) {
+          for (const nodePort of nodePorts) {
+            const laneNodePort = laneNode(nodePort, route.id);
+            addNode(laneNodePort);
+            addEdge(laneEdge(laneExternal, laneNodePort, 'traffic'));
+            addEdge(laneEdge(laneNodePort, laneController, 'forwards'));
+          }
+        } else {
+          addEdge(laneEdge(laneExternal, laneController, 'traffic'));
+        }
+        addEdge(laneEdge(laneController, laneIngress, 'controls'));
+      }
 
       const podEdges = edges.filter(
         (edge) => edge.source === displayService.id && ['selects', 'endpointslice'].includes(edgeKind(edge)),
@@ -388,8 +425,9 @@ function buildNamespaceTrafficGraph(
         if (kindOf(pod) !== 'pod' || pod?.data.namespace !== namespace) {
           continue;
         }
-        addNode(pod);
-        addEdge(podEdge);
+        const lanePod = laneNode(pod, route.id);
+        addNode(lanePod);
+        addEdge(laneEdge(laneService, lanePod, edgeKind(podEdge)));
 
         const nodeHostEdges = edges.filter((edge) => edge.target === pod.id && edgeKind(edge) === 'hosts');
         for (const nodeHostEdge of nodeHostEdges) {
@@ -397,8 +435,9 @@ function buildNamespaceTrafficGraph(
           if (!node || kindOf(node) !== 'node') {
             continue;
           }
-          addNode(node);
-          addEdge(syntheticEdge(pod.id, node.id, 'runs_on', 'Node'));
+          const laneKubeNode = laneNode(node, route.id);
+          addNode(laneKubeNode);
+          addEdge(laneEdge(lanePod, laneKubeNode, 'runs_on'));
         }
       }
     }
@@ -416,12 +455,8 @@ function buildNamespaceTrafficGraph(
     }
   }
 
-  if (fallbackControllerUsed) {
-    addNode(fallbackController);
-  }
-
   return {
-    nodes: layoutTrafficPath(uniqueById(Array.from(graphNodes.values()))),
+    nodes: layoutTrafficPath(Array.from(graphNodes.values())),
     edges: Array.from(graphEdges.values()),
     routes: routeItems.sort((left, right) => {
       const severity = severityRank(left.severity) - severityRank(right.severity);
@@ -640,14 +675,6 @@ export default function App() {
                     <div className="mt-1 text-slate-900">{selectedRoute.confidence}</div>
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => downloadDebugBundle(namespace, selectedRoute, snapshot?.version)}
-                  className="mt-4 w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-black text-white transition hover:bg-slate-700"
-                >
-                  Download debug bundle
-                </button>
               </div>
             </aside>
           ) : null}
