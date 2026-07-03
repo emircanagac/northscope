@@ -304,10 +304,30 @@ function severityClass(severity: string): string {
   return 'border-slate-200 bg-slate-50 text-slate-700';
 }
 
-function routeButtonClass(route: RouteItem, selected: boolean): string {
+function routeGroupSeverity(group: RouteGroup): string {
+  return group.routes.reduce((current, route) => {
+    return severityRank(route.severity) < severityRank(current) ? route.severity : current;
+  }, group.routes[0]?.severity ?? 'unknown');
+}
+
+function routeGroupStatus(group: RouteGroup): string {
+  const statuses = Array.from(new Set(group.routes.map((route) => route.status).filter(Boolean)));
+  if (statuses.length === 1) {
+    return statuses[0];
+  }
+  if (group.routes.some((route) => route.severity === 'error')) {
+    return 'Needs attention';
+  }
+  if (group.routes.some((route) => route.severity === 'warning')) {
+    return 'Warning';
+  }
+  return `${group.routes.length} paths`;
+}
+
+function routeGroupButtonClass(group: RouteGroup, selected: boolean): string {
   return [
     'w-full rounded-md border px-3 py-2 text-left transition',
-    selected ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : severityClass(route.severity),
+    selected ? 'border-slate-900 bg-slate-900 text-white shadow-sm' : severityClass(routeGroupSeverity(group)),
   ].join(' ');
 }
 
@@ -475,14 +495,18 @@ function laneIdsForEdge(edge: TopologyEdge): string[] {
   return [laneIdFromNodeId(edge.source), laneIdFromNodeId(edge.target)].filter(Boolean);
 }
 
-function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selectedHostLaneId: string): TopologyNode[] {
-  if (!selectedRouteId && !selectedHostLaneId) {
+function laneMatchesSelection(laneId: string, selectedRouteIds: string[], selectedHostLaneId: string): boolean {
+  return laneId === selectedHostLaneId || selectedRouteIds.includes(laneId);
+}
+
+function focusNodesByRoute(nodes: TopologyNode[], selectedRouteIds: string[], selectedHostLaneId: string): TopologyNode[] {
+  if (selectedRouteIds.length === 0 && !selectedHostLaneId) {
     return nodes;
   }
 
   return nodes.map((node) => {
     const laneId = laneIdForNode(node);
-    const active = laneId === selectedRouteId || laneId === selectedHostLaneId;
+    const active = laneMatchesSelection(laneId, selectedRouteIds, selectedHostLaneId);
     return {
       ...node,
       style: {
@@ -494,14 +518,14 @@ function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selec
   });
 }
 
-function filterNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selectedHostLaneId: string): TopologyNode[] {
-  if (!selectedRouteId && !selectedHostLaneId) {
+function filterNodesByRoute(nodes: TopologyNode[], selectedRouteIds: string[], selectedHostLaneId: string): TopologyNode[] {
+  if (selectedRouteIds.length === 0 && !selectedHostLaneId) {
     return nodes;
   }
 
   return nodes.filter((node) => {
     const laneId = laneIdForNode(node);
-    return laneId === selectedRouteId || laneId === selectedHostLaneId;
+    return laneMatchesSelection(laneId, selectedRouteIds, selectedHostLaneId);
   });
 }
 
@@ -510,14 +534,14 @@ function filterEdgesForNodes(edges: TopologyEdge[], nodes: TopologyNode[]): Topo
   return edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
 }
 
-function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteId: string, selectedHostLaneId: string): TopologyEdge[] {
-  if (!selectedRouteId && !selectedHostLaneId) {
+function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteIds: string[], selectedHostLaneId: string): TopologyEdge[] {
+  if (selectedRouteIds.length === 0 && !selectedHostLaneId) {
     return edges;
   }
 
   return edges.map((edge) => {
     const laneIds = laneIdsForEdge(edge);
-    const active = laneIds.includes(selectedRouteId) || laneIds.includes(selectedHostLaneId);
+    const active = laneIds.some((laneId) => laneMatchesSelection(laneId, selectedRouteIds, selectedHostLaneId));
     return {
       ...edge,
       animated: Boolean(edge.animated && active),
@@ -707,7 +731,7 @@ function buildNamespaceTrafficGraph(
 export default function App() {
   const { nodes, edges, snapshot, status, error } = useTopologyStream();
   const [namespace, setNamespace] = useState('');
-  const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [selectedGroupId, setSelectedGroupId] = useState('');
   const [topologyMode, setTopologyMode] = useState<TopologyMode>('simple');
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<TopologyNode, TopologyEdge> | null>(null);
   const [flowNodes, setNodes, onNodesChange] = useNodesState<TopologyNode>([]);
@@ -728,14 +752,15 @@ export default function App() {
   const visibleGraphEdges = namespaceGraph.edges;
   const routes = namespaceGraph.routes;
   const routeGroups = useMemo(() => groupRoutes(routes), [routes]);
-  const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
+  const selectedGroup = routeGroups.find((group) => group.id === selectedGroupId) ?? routeGroups[0];
+  const selectedRouteIds = useMemo(() => selectedGroup?.routes.map((route) => route.id) ?? [], [selectedGroup]);
   const displayGraphNodes = useMemo(() => {
     if (topologyMode !== 'simple') {
       return visibleGraphNodes;
     }
-    const selectedNodes = filterNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? '');
+    const selectedNodes = filterNodesByRoute(visibleGraphNodes, selectedRouteIds, selectedGroup?.id ?? '');
     return layoutTrafficPath(selectedNodes, topologyMode);
-  }, [selectedRoute?.hostLaneId, selectedRoute?.id, topologyMode, visibleGraphNodes]);
+  }, [selectedGroup?.id, selectedRouteIds, topologyMode, visibleGraphNodes]);
   const displayGraphEdges = useMemo(() => {
     if (topologyMode !== 'simple') {
       return visibleGraphEdges;
@@ -743,12 +768,12 @@ export default function App() {
     return filterEdgesForNodes(visibleGraphEdges, displayGraphNodes);
   }, [displayGraphNodes, topologyMode, visibleGraphEdges]);
   const focusedGraphNodes = useMemo(
-    () => focusNodesByRoute(displayGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
-    [displayGraphNodes, selectedRoute?.hostLaneId, selectedRoute?.id],
+    () => focusNodesByRoute(displayGraphNodes, selectedRouteIds, selectedGroup?.id ?? ''),
+    [displayGraphNodes, selectedGroup?.id, selectedRouteIds],
   );
   const focusedGraphEdges = useMemo(
-    () => focusEdgesByRoute(displayGraphEdges, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
-    [displayGraphEdges, selectedRoute?.hostLaneId, selectedRoute?.id],
+    () => focusEdgesByRoute(displayGraphEdges, selectedRouteIds, selectedGroup?.id ?? ''),
+    [displayGraphEdges, selectedGroup?.id, selectedRouteIds],
   );
   const hasSnapshot = Boolean(snapshot);
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
@@ -795,13 +820,13 @@ export default function App() {
       void flowInstance.fitView({ padding: topologyMode === 'simple' ? 0.28 : 0.18, duration: 180 });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [flowEdges, flowInstance, flowNodes, selectedRoute?.id, topologyMode]);
+  }, [flowEdges, flowInstance, flowNodes, selectedGroup?.id, topologyMode]);
 
   useEffect(() => {
-    if (!routes.some((route) => route.id === selectedRouteId)) {
-      setSelectedRouteId(routes[0]?.id ?? '');
+    if (!routeGroups.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(routeGroups[0]?.id ?? '');
     }
-  }, [routes, selectedRouteId]);
+  }, [routeGroups, selectedGroupId]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100 text-slate-950">
@@ -873,29 +898,36 @@ export default function App() {
               </div>
               <div className="min-h-0 flex-1 space-y-3 overflow-auto px-3 pb-3">
                 {routeGroups.map((group) => (
-                  <div key={group.id}>
-                    <div className="mb-1.5 px-1">
-                      <div className="truncate text-[12px] font-black text-slate-800">{group.host}</div>
+                  <button
+                    key={group.id}
+                    type="button"
+                    onClick={() => setSelectedGroupId(group.id)}
+                    className={routeGroupButtonClass(group, group.id === selectedGroup?.id)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-black">{group.host}</div>
+                        <div className="mt-0.5 truncate text-[11px] font-semibold opacity-70">{group.ingress}</div>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700">
+                        {routeGroupStatus(group)}
+                      </span>
                     </div>
-                    <div className="space-y-2">
+                    <div className="mt-2 space-y-1.5">
                       {group.routes.map((route) => (
-                        <button
+                        <div
                           key={route.id}
-                          type="button"
-                          onClick={() => setSelectedRouteId(route.id)}
-                          className={routeButtonClass(route, route.id === selectedRoute?.id)}
+                          className="rounded border border-white/40 bg-white/45 px-2 py-1"
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate text-sm font-black">{route.path}</span>
-                            <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700">
-                              {route.status}
-                            </span>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 truncate text-xs font-black">{route.path}</span>
+                            <span className="shrink-0 text-[10px] font-bold uppercase opacity-70">{route.status}</span>
                           </div>
-                          <div className="mt-1 truncate text-xs font-semibold opacity-80">{route.backend}</div>
-                        </button>
+                          <div className="mt-0.5 truncate text-[11px] font-semibold opacity-75">{route.backend}</div>
+                        </div>
                       ))}
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>
@@ -904,7 +936,7 @@ export default function App() {
 
         <section className="relative min-w-0 flex-1">
           <ReactFlow<TopologyNode, TopologyEdge>
-            key={`${namespace || 'none'}:${topologyMode}`}
+            key={`${namespace || 'none'}:${topologyMode}:${selectedGroup?.id ?? 'none'}`}
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
