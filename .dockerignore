@@ -1,0 +1,7 @@
+.git
+.github
+ui/node_modules
+ui/dist
+Dockerfile
+README.md
+*.log

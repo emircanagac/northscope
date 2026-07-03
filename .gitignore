@@ -1,0 +1,20 @@
+.DS_Store
+*.log
+
+# Go
+bin/
+dist/
+
+# UI
+ui/node_modules/
+ui/tsconfig.tsbuildinfo
+
+# Graphify local analysis outputs
+graphify-out/
+.graphify*
+
+# Local editor and env files
+.env
+.env.*
+.idea/
+.vscode/
