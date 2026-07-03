@@ -135,13 +135,13 @@ function namespaceTrafficNode(namespace: string): TopologyNode {
     type: 'northscopeNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'External edge',
+      label: 'F5 / LB',
       kind: 'ExternalEdge',
       namespace,
-      name: 'External edge',
+      name: 'F5 / LB',
       status: 'Assumed entry',
       properties: {
-        role: 'F5 / LB assumed entry',
+        role: 'Traffic entry point',
       },
     },
   };
@@ -224,6 +224,13 @@ function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): TopologyN
       position: {
         x: columnX[column],
         y: rowIndex * rowGap,
+      },
+      data: {
+        ...node.data,
+        properties: {
+          ...(node.data.properties ?? {}),
+          viewMode: mode,
+        },
       },
     };
   });
@@ -486,6 +493,22 @@ function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selec
   });
 }
 
+function filterNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selectedHostLaneId: string): TopologyNode[] {
+  if (!selectedRouteId && !selectedHostLaneId) {
+    return nodes;
+  }
+
+  return nodes.filter((node) => {
+    const laneId = laneIdForNode(node);
+    return laneId === selectedRouteId || laneId === selectedHostLaneId;
+  });
+}
+
+function filterEdgesForNodes(edges: TopologyEdge[], nodes: TopologyNode[]): TopologyEdge[] {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  return edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+}
+
 function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteId: string, selectedHostLaneId: string): TopologyEdge[] {
   if (!selectedRouteId && !selectedHostLaneId) {
     return edges;
@@ -704,13 +727,25 @@ export default function App() {
   const routes = namespaceGraph.routes;
   const routeGroups = useMemo(() => groupRoutes(routes), [routes]);
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
+  const displayGraphNodes = useMemo(() => {
+    if (topologyMode !== 'simple') {
+      return visibleGraphNodes;
+    }
+    return filterNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? '');
+  }, [selectedRoute?.hostLaneId, selectedRoute?.id, topologyMode, visibleGraphNodes]);
+  const displayGraphEdges = useMemo(() => {
+    if (topologyMode !== 'simple') {
+      return visibleGraphEdges;
+    }
+    return filterEdgesForNodes(visibleGraphEdges, displayGraphNodes);
+  }, [displayGraphNodes, topologyMode, visibleGraphEdges]);
   const focusedGraphNodes = useMemo(
-    () => focusNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
-    [selectedRoute?.hostLaneId, selectedRoute?.id, visibleGraphNodes],
+    () => focusNodesByRoute(displayGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
+    [displayGraphNodes, selectedRoute?.hostLaneId, selectedRoute?.id],
   );
   const focusedGraphEdges = useMemo(
-    () => focusEdgesByRoute(visibleGraphEdges, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
-    [selectedRoute?.hostLaneId, selectedRoute?.id, visibleGraphEdges],
+    () => focusEdgesByRoute(displayGraphEdges, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? ''),
+    [displayGraphEdges, selectedRoute?.hostLaneId, selectedRoute?.id],
   );
   const hasSnapshot = Boolean(snapshot);
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
@@ -804,18 +839,18 @@ export default function App() {
             <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">Pods {summary.pods}</span>
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700">Nodes {summary.nodes}</span>
           </div>
-          <div className="ml-auto flex h-9 overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-0.5 text-xs font-black">
+          <div className="ml-auto flex h-9 overflow-hidden rounded-md border border-slate-300 bg-white p-0.5 text-xs font-black shadow-sm">
             <button
               type="button"
               onClick={() => setTopologyMode('simple')}
-              className={`px-3 transition ${topologyMode === 'simple' ? 'rounded bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+              className={`px-3 transition ${topologyMode === 'simple' ? 'rounded bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
             >
               Simple
             </button>
             <button
               type="button"
               onClick={() => setTopologyMode('expanded')}
-              className={`px-3 transition ${topologyMode === 'expanded' ? 'rounded bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+              className={`px-3 transition ${topologyMode === 'expanded' ? 'rounded bg-slate-950 text-white shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
             >
               Expanded
             </button>

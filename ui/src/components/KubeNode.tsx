@@ -165,7 +165,7 @@ function shouldShowStatus(data: TopologyNode['data'], status: string): boolean {
 
 function kindLabel(kind: NodeKind): string {
   if (kind === 'ExternalEdge') {
-    return 'External';
+    return 'F5 / LB';
   }
   if (kind === 'PodGroup') {
     return 'Pods';
@@ -246,11 +246,13 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
   const tone = kindTone(data.kind);
   const summaryLine = portSummary(data);
   const showStatus = shouldShowStatus(data, status);
+  const compact = data.properties?.viewMode === 'simple';
 
   return (
     <div
       className={cx(
-        'group relative grid w-[250px] gap-3 rounded-lg border p-3 shadow-lg transition duration-150',
+        'group relative grid rounded-lg border shadow-lg transition duration-150',
+        compact ? 'w-[220px] gap-2 p-2.5' : 'w-[250px] gap-3 p-3',
         selected && 'ring-2 ring-slate-900/20',
         hasError ? 'border-red-500 bg-red-50 shadow-red-200' : tone.card,
       )}
@@ -260,10 +262,11 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
         position={Position.Left}
         className="!h-3 !w-3 !border-2 !border-white !bg-slate-500"
       />
-      <div className="flex items-start gap-3">
+      <div className={cx('flex items-start', compact ? 'gap-2.5' : 'gap-3')}>
         <div
           className={cx(
-            'grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[11px] font-black tracking-wide',
+            'grid shrink-0 place-items-center rounded-lg font-black tracking-wide',
+            compact ? 'h-8 w-8 text-[10px]' : 'h-9 w-9 text-[11px]',
             hasError ? 'bg-red-600 text-white' : tone.icon,
           )}
         >
@@ -286,12 +289,14 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
               </span>
             ) : null}
           </div>
-          <div className="mt-2 line-clamp-3 break-words text-sm font-bold leading-tight text-slate-950">{data.name}</div>
+          <div className={cx('line-clamp-3 break-words font-bold leading-tight text-slate-950', compact ? 'mt-1.5 text-[13px]' : 'mt-2 text-sm')}>
+            {data.name}
+          </div>
           {data.namespace ? <div className="mt-1 truncate text-xs font-medium text-slate-500">{data.namespace}</div> : null}
         </div>
       </div>
       {summaryLine ? (
-        <div className="line-clamp-2 break-words rounded-md bg-white/70 px-2 py-1 text-[11px] font-medium text-slate-600">
+        <div className={cx('line-clamp-2 break-words rounded-md bg-white/70 px-2 font-medium text-slate-600', compact ? 'py-0.5 text-[10px]' : 'py-1 text-[11px]')}>
           {summaryLine}
         </div>
       ) : null}
