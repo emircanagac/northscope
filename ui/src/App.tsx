@@ -381,8 +381,9 @@ function laneNode(node: TopologyNode, laneId: string): TopologyNode {
   };
 }
 
-function hostLaneId(namespace: string, host: string): string {
-  return `host:${namespace}:${safeVisualId(host)}`;
+function ingressHostLaneId(namespace: string, ingress: TopologyNode, host: string): string {
+  const ingressName = String(ingress.data.name || ingress.data.label || ingress.id);
+  return `ingress-host:${namespace}:${safeVisualId(ingressName)}:${safeVisualId(host)}`;
 }
 
 function syntheticHostNode(namespace: string, host: string): TopologyNode {
@@ -609,7 +610,7 @@ function buildNamespaceTrafficGraph(
       const service = serviceEdge ? nodeById.get(serviceEdge.target) : undefined;
       const displayService = service ?? syntheticMissingServiceNode(namespace, route);
       const host = routeHost(route);
-      const routeHostLaneId = hostLaneId(namespace, host);
+      const routeHostLaneId = ingressHostLaneId(namespace, ingress, host);
       routeItems.push(routeItemFromNode(route, ingress, routeHostLaneId, displayService));
       routeRecords.push({ route, serviceEdge, service, displayService, host, hostLaneId: routeHostLaneId });
     }
