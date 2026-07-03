@@ -1,0 +1,6 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /
+COPY bin/northscope-linux /northscope
+EXPOSE 8080
+USER 65532:65532
+ENTRYPOINT ["/northscope"]
