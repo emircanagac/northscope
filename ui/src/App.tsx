@@ -48,6 +48,8 @@ interface NamespaceTrafficGraph {
   routes: RouteItem[];
 }
 
+type TopologyMode = 'simple' | 'expanded';
+
 interface RouteGroup {
   id: string;
   host: string;
@@ -163,6 +165,13 @@ function syntheticControllerNode(namespace: string): TopologyNode {
   };
 }
 
+function nodeColumn(node: TopologyNode): string {
+  const kind = kindOf(node);
+  if (kind === 'f5' || kind === 'externaledge') return 'f5';
+  if (kind === 'podgroup') return 'pod';
+  return kind;
+}
+
 function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
   const columnOrder = ['f5', 'nodeport', 'controller', 'ingress', 'dns', 'route', 'service', 'pod', 'node'];
   const columnX: Record<string, number> = {
@@ -179,14 +188,14 @@ function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
   const columns = new Map<string, TopologyNode[]>();
 
   for (const node of nodes) {
-    const kind = kindOf(node);
-    const column = kind === 'f5' || kind === 'externaledge' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
+    const kind = nodeColumn(node);
+    const column = columnOrder.includes(kind) ? kind : 'route';
     columns.set(column, [...(columns.get(column) ?? []), node]);
   }
 
   return nodes.map((node) => {
-    const kind = kindOf(node);
-    const column = kind === 'f5' || kind === 'externaledge' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
+    const kind = nodeColumn(node);
+    const column = columnOrder.includes(kind) ? kind : 'route';
     const columnNodes = [...(columns.get(column) ?? [])].sort((left, right) => {
       const leftLane = String(left.data.properties?.visualLane ?? '');
       const rightLane = String(right.data.properties?.visualLane ?? '');
@@ -351,6 +360,35 @@ function syntheticHostNode(namespace: string, host: string): TopologyNode {
   };
 }
 
+function isReadyPod(node?: TopologyNode): boolean {
+  const status = String(node?.data.status ?? node?.data.phase ?? '').toLowerCase();
+  if (status.includes('notready')) {
+    return false;
+  }
+  return status.includes('ready') || status === 'running';
+}
+
+function syntheticPodSummaryNode(namespace: string, route: TopologyNode, pods: TopologyNode[]): TopologyNode {
+  const readyPods = pods.filter(isReadyPod).length;
+  const totalPods = pods.length;
+  const status = totalPods === 0 ? 'No pods' : `${readyPods} ready / ${totalPods} pods`;
+  return {
+    id: `visual:pod-summary:${route.id}`,
+    type: 'northscopeNode',
+    position: { x: 0, y: 0 },
+    data: {
+      label: status,
+      kind: 'PodGroup',
+      namespace,
+      name: status,
+      status,
+      properties: {
+        summary: totalPods === 0 ? 'No matching pods observed' : pods.map((pod) => pod.data.name).join(', '),
+      },
+    },
+  };
+}
+
 function laneEdge(source: TopologyNode, target: TopologyNode, kind: string): TopologyEdge {
   return syntheticEdge(source.id, target.id, kind, edgeLabel(kind));
 }
@@ -402,13 +440,17 @@ function laneIdForNode(node: TopologyNode): string {
   return String(node.data.properties?.visualLane ?? '');
 }
 
-function laneIdForEdge(edge: TopologyEdge): string {
+function laneIdFromNodeId(id: string): string {
   const marker = ':lane:';
-  const sourceIndex = edge.source.lastIndexOf(marker);
-  if (sourceIndex === -1) {
+  const laneIndex = id.lastIndexOf(marker);
+  if (laneIndex === -1) {
     return '';
   }
-  return edge.source.slice(sourceIndex + marker.length);
+  return id.slice(laneIndex + marker.length);
+}
+
+function laneIdsForEdge(edge: TopologyEdge): string[] {
+  return [laneIdFromNodeId(edge.source), laneIdFromNodeId(edge.target)].filter(Boolean);
 }
 
 function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string, selectedHostLaneId: string): TopologyNode[] {
@@ -436,8 +478,8 @@ function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteId: string, selec
   }
 
   return edges.map((edge) => {
-    const laneId = laneIdForEdge(edge);
-    const active = laneId === selectedRouteId || laneId === selectedHostLaneId;
+    const laneIds = laneIdsForEdge(edge);
+    const active = laneIds.includes(selectedRouteId) || laneIds.includes(selectedHostLaneId);
     return {
       ...edge,
       animated: Boolean(edge.animated && active),
@@ -455,6 +497,7 @@ function buildNamespaceTrafficGraph(
   namespace: string,
   nodes: TopologyNode[],
   edges: TopologyEdge[],
+  mode: TopologyMode,
 ): NamespaceTrafficGraph {
   if (!namespace) {
     return { nodes: [], edges: [], routes: [] };
@@ -478,6 +521,16 @@ function buildNamespaceTrafficGraph(
   const addEdge = (edge: TopologyEdge) => {
     graphEdges.set(edge.id, displayEdge(edge));
   };
+  const podsForService = (service: TopologyNode): TopologyNode[] =>
+    edges
+      .filter((edge) => edge.source === service.id && ['selects', 'endpointslice'].includes(edgeKind(edge)))
+      .map((edge) => nodeById.get(edge.target))
+      .filter((node): node is TopologyNode => {
+        if (!node) {
+          return false;
+        }
+        return kindOf(node) === 'pod' && node.data.namespace === namespace;
+      });
 
   for (const ingress of ingressNodes) {
     const controllerEdges = edges.filter((edge) => edge.target === ingress.id && edgeKind(edge) === 'controls');
@@ -508,12 +561,9 @@ function buildNamespaceTrafficGraph(
       const host = hostRecords[0].host;
       const laneExternal = laneNode(namespaceTrafficNode(namespace), routeHostLaneId);
       const laneIngress = laneNode(ingress, routeHostLaneId);
-      const laneHost = laneNode(syntheticHostNode(namespace, host), routeHostLaneId);
 
       addNode(laneExternal);
       addNode(laneIngress);
-      addNode(laneHost);
-      addEdge(laneEdge(laneIngress, laneHost, 'defines'));
 
       const controllers = controllerEdges
         .map((edge) => nodeById.get(edge.source))
@@ -537,36 +587,54 @@ function buildNamespaceTrafficGraph(
         addEdge(laneEdge(laneController, laneIngress, 'controls'));
       }
 
-      for (const record of hostRecords) {
-        const laneRoute = laneNode(record.route, record.route.id);
-        const laneService = laneNode(record.displayService, record.route.id);
+      if (mode === 'expanded') {
+        const laneHost = laneNode(syntheticHostNode(namespace, host), routeHostLaneId);
+        addNode(laneHost);
+        addEdge(laneEdge(laneIngress, laneHost, 'defines'));
 
-        addNode(laneRoute);
-        addNode(laneService);
-        addEdge(laneEdge(laneHost, laneRoute, 'defines'));
-        addEdge(laneEdge(laneRoute, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
+        for (const record of hostRecords) {
+          const laneRoute = laneNode(record.route, record.route.id);
+          const laneService = laneNode(record.displayService, record.route.id);
 
-        const podEdges = edges.filter(
-          (edge) => edge.source === record.displayService.id && ['selects', 'endpointslice'].includes(edgeKind(edge)),
-        );
-        for (const podEdge of podEdges) {
-          const pod = nodeById.get(podEdge.target);
-          if (kindOf(pod) !== 'pod' || pod?.data.namespace !== namespace) {
-            continue;
-          }
-          const lanePod = laneNode(pod, record.route.id);
-          addNode(lanePod);
-          addEdge(laneEdge(laneService, lanePod, edgeKind(podEdge)));
+          addNode(laneRoute);
+          addNode(laneService);
+          addEdge(laneEdge(laneHost, laneRoute, 'defines'));
+          addEdge(laneEdge(laneRoute, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
 
-          const nodeHostEdges = edges.filter((edge) => edge.target === pod.id && edgeKind(edge) === 'hosts');
-          for (const nodeHostEdge of nodeHostEdges) {
-            const node = nodeById.get(nodeHostEdge.source);
-            if (!node || kindOf(node) !== 'node') {
+          const podEdges = edges.filter(
+            (edge) => edge.source === record.displayService.id && ['selects', 'endpointslice'].includes(edgeKind(edge)),
+          );
+          for (const podEdge of podEdges) {
+            const pod = nodeById.get(podEdge.target);
+            if (kindOf(pod) !== 'pod' || pod?.data.namespace !== namespace) {
               continue;
             }
-            const laneKubeNode = laneNode(node, record.route.id);
-            addNode(laneKubeNode);
-            addEdge(laneEdge(lanePod, laneKubeNode, 'runs_on'));
+            const lanePod = laneNode(pod, record.route.id);
+            addNode(lanePod);
+            addEdge(laneEdge(laneService, lanePod, edgeKind(podEdge)));
+
+            const nodeHostEdges = edges.filter((edge) => edge.target === pod.id && edgeKind(edge) === 'hosts');
+            for (const nodeHostEdge of nodeHostEdges) {
+              const node = nodeById.get(nodeHostEdge.source);
+              if (!node || kindOf(node) !== 'node') {
+                continue;
+              }
+              const laneKubeNode = laneNode(node, record.route.id);
+              addNode(laneKubeNode);
+              addEdge(laneEdge(lanePod, laneKubeNode, 'runs_on'));
+            }
+          }
+        }
+      } else {
+        for (const record of hostRecords) {
+          const laneService = laneNode(record.displayService, record.route.id);
+          addNode(laneService);
+          addEdge(laneEdge(laneIngress, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
+
+          if (record.service) {
+            const lanePodSummary = laneNode(syntheticPodSummaryNode(namespace, record.route, podsForService(record.displayService)), record.route.id);
+            addNode(lanePodSummary);
+            addEdge(laneEdge(laneService, lanePodSummary, 'selects'));
           }
         }
       }
@@ -602,6 +670,7 @@ export default function App() {
   const { nodes, edges, snapshot, status, error } = useTopologyStream();
   const [namespace, setNamespace] = useState('');
   const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [topologyMode, setTopologyMode] = useState<TopologyMode>('simple');
   const [flowNodes, setNodes, onNodesChange] = useNodesState<TopologyNode>([]);
   const [flowEdges, setEdges, onEdgesChange] = useEdgesState<TopologyEdge>([]);
 
@@ -612,8 +681,8 @@ export default function App() {
   );
 
   const namespaceGraph = useMemo(
-    () => buildNamespaceTrafficGraph(namespace, nodes, edges),
-    [edges, namespace, nodes],
+    () => buildNamespaceTrafficGraph(namespace, nodes, edges, topologyMode),
+    [edges, namespace, nodes, topologyMode],
   );
 
   const visibleGraphNodes = namespaceGraph.nodes;
@@ -720,6 +789,22 @@ export default function App() {
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">Services {summary.services}</span>
             <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">Pods {summary.pods}</span>
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700">Nodes {summary.nodes}</span>
+          </div>
+          <div className="flex h-9 overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-0.5 text-xs font-black">
+            <button
+              type="button"
+              onClick={() => setTopologyMode('simple')}
+              className={`px-3 transition ${topologyMode === 'simple' ? 'rounded bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+            >
+              Simple
+            </button>
+            <button
+              type="button"
+              onClick={() => setTopologyMode('expanded')}
+              className={`px-3 transition ${topologyMode === 'expanded' ? 'rounded bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+            >
+              Expanded
+            </button>
           </div>
           <div
             className={`ml-auto rounded-full px-3 py-1 text-xs font-bold ${

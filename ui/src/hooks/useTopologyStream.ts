@@ -15,7 +15,8 @@ export type NodeKind =
   | 'Route'
   | 'Service'
   | 'EndpointSlice'
-  | 'Pod';
+  | 'Pod'
+  | 'PodGroup';
 
 export interface TopologyNodeData extends Record<string, unknown> {
   label: string;

@@ -119,6 +119,15 @@ function kindTone(kind: NodeKind): {
     };
   }
 
+  if (kind === 'PodGroup') {
+    return {
+      card: 'border-violet-300 bg-violet-50 shadow-violet-100',
+      icon: 'bg-violet-600 text-white',
+      badge: 'bg-violet-100 text-violet-700',
+      initials: 'PG',
+    };
+  }
+
   return {
     card: 'border-slate-300 bg-white shadow-slate-100',
     icon: 'bg-slate-700 text-white',
@@ -129,6 +138,9 @@ function kindTone(kind: NodeKind): {
 
 function isErrorStatus(status: string): boolean {
   const normalized = status.toLowerCase();
+  if (normalized.startsWith('0 ready') || normalized.includes('no pods')) {
+    return true;
+  }
   return ['error', 'failed', 'crash', 'imagepull', 'errimagepull', 'notready'].some((value) =>
     normalized.includes(value),
   );
@@ -155,6 +167,9 @@ function kindLabel(kind: NodeKind): string {
   if (kind === 'ExternalEdge') {
     return 'External';
   }
+  if (kind === 'PodGroup') {
+    return 'Pods';
+  }
   return kind;
 }
 
@@ -165,6 +180,10 @@ function portSummary(data: TopologyNode['data']): string | null {
 
   if (data.kind === 'Pod') {
     return data.properties?.podIP ? `podIP ${data.properties.podIP}` : null;
+  }
+
+  if (data.kind === 'PodGroup') {
+    return data.properties?.summary ?? null;
   }
 
   if (data.kind === 'Controller') {
