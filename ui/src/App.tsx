@@ -340,6 +340,57 @@ function pickControllerNodePorts(controllerId: string, nodesById: Map<string, To
   return [candidates[0]];
 }
 
+function laneIdForNode(node: TopologyNode): string {
+  return String(node.data.properties?.visualLane ?? '');
+}
+
+function laneIdForEdge(edge: TopologyEdge): string {
+  const marker = ':lane:';
+  const sourceIndex = edge.source.lastIndexOf(marker);
+  if (sourceIndex === -1) {
+    return '';
+  }
+  return edge.source.slice(sourceIndex + marker.length);
+}
+
+function focusNodesByRoute(nodes: TopologyNode[], selectedRouteId: string): TopologyNode[] {
+  if (!selectedRouteId) {
+    return nodes;
+  }
+
+  return nodes.map((node) => {
+    const active = laneIdForNode(node) === selectedRouteId;
+    return {
+      ...node,
+      style: {
+        ...(node.style ?? {}),
+        opacity: active ? 1 : 0.22,
+      },
+      zIndex: active ? 20 : 0,
+    };
+  });
+}
+
+function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteId: string): TopologyEdge[] {
+  if (!selectedRouteId) {
+    return edges;
+  }
+
+  return edges.map((edge) => {
+    const active = laneIdForEdge(edge) === selectedRouteId;
+    return {
+      ...edge,
+      animated: Boolean(edge.animated && active),
+      style: {
+        ...(edge.style ?? {}),
+        strokeOpacity: active ? 0.95 : 0.16,
+        strokeWidth: active ? 2.6 : 1.2,
+      },
+      zIndex: active ? 20 : 0,
+    };
+  });
+}
+
 function buildNamespaceTrafficGraph(
   namespace: string,
   nodes: TopologyNode[],
@@ -491,6 +542,14 @@ export default function App() {
   const routes = namespaceGraph.routes;
   const routeGroups = useMemo(() => groupRoutes(routes), [routes]);
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
+  const focusedGraphNodes = useMemo(
+    () => focusNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? ''),
+    [selectedRoute?.id, visibleGraphNodes],
+  );
+  const focusedGraphEdges = useMemo(
+    () => focusEdgesByRoute(visibleGraphEdges, selectedRoute?.id ?? ''),
+    [selectedRoute?.id, visibleGraphEdges],
+  );
   const hasSnapshot = Boolean(snapshot);
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
   const graphReady = visibleGraphNodes.length > 0;
@@ -510,13 +569,13 @@ export default function App() {
       return 'Select a namespace to render ingress traffic paths';
     }
     if (graphReady) {
-      return `${routes.length} ingress routes / ${visibleGraphNodes.length - 1} resources in ${namespace}`;
+      return `${routes.length} ingress traffic paths in ${namespace}`;
     }
     if (hasTopology) {
       return `No ingress traffic paths found in ${namespace}`;
     }
     return 'Snapshot received: 0 supported objects';
-  }, [graphReady, hasTopology, namespace, routes.length, snapshot, status, visibleGraphNodes.length]);
+  }, [graphReady, hasTopology, namespace, routes.length, snapshot, status]);
 
   const emptyStateTitle = useMemo(() => {
     if (!hasSnapshot) {
@@ -545,9 +604,9 @@ export default function App() {
   }, [hasSnapshot, hasTopology, namespace]);
 
   useEffect(() => {
-    setNodes(visibleGraphNodes);
-    setEdges(visibleGraphEdges);
-  }, [setEdges, setNodes, visibleGraphEdges, visibleGraphNodes]);
+    setNodes(focusedGraphNodes);
+    setEdges(focusedGraphEdges);
+  }, [focusedGraphEdges, focusedGraphNodes, setEdges, setNodes]);
 
   useEffect(() => {
     if (!routes.some((route) => route.id === selectedRouteId)) {

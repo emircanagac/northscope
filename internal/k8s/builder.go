@@ -152,18 +152,6 @@ func BuildTopologyWithResources(
 				builder.addEdge(routeID, nodeID(models.NodeKindService, svc.Namespace, svc.Name), "routes", "HTTP backend")
 			}
 		}
-		for _, backendName := range ingressBackendServiceNames(ingress) {
-			svc, ok := servicesByKey[namespacedKey(ingress.Namespace, backendName)]
-			if !ok {
-				continue
-			}
-			builder.addEdge(
-				nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
-				nodeID(models.NodeKindService, svc.Namespace, svc.Name),
-				"routes",
-				"HTTP route",
-			)
-		}
 	}
 
 	for _, resource := range externalResources {
@@ -1116,36 +1104,6 @@ func (b *topologyBuilder) nextPosition(kind models.NodeKind) models.Position {
 		X: kindColumn(kind),
 		Y: float64(row * 140),
 	}
-}
-
-func ingressBackendServiceNames(ingress *networkingv1.Ingress) []string {
-	seen := map[string]struct{}{}
-	add := func(backend networkingv1.IngressBackend) {
-		if backend.Service == nil || backend.Service.Name == "" {
-			return
-		}
-		seen[backend.Service.Name] = struct{}{}
-	}
-
-	if ingress.Spec.DefaultBackend != nil {
-		add(*ingress.Spec.DefaultBackend)
-	}
-
-	for _, rule := range ingress.Spec.Rules {
-		if rule.HTTP == nil {
-			continue
-		}
-		for _, path := range rule.HTTP.Paths {
-			add(path.Backend)
-		}
-	}
-
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func ingressRoutes(ingress *networkingv1.Ingress) []ingressRoute {

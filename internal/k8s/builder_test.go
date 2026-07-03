@@ -70,7 +70,10 @@ func TestBuildTopologyIngressServicePod(t *testing.T) {
 	assertNode(t, snapshot, nodeID(models.NodeKindService, "default", "web"))
 	assertNode(t, snapshot, nodeID(models.NodeKindPod, "default", "web-abc"))
 	assertEdge(t, snapshot, controllerNodeID(className), nodeID(models.NodeKindIngress, "default", "web"), "controls")
-	assertEdge(t, snapshot, nodeID(models.NodeKindIngress, "default", "web"), nodeID(models.NodeKindService, "default", "web"), "routes")
+	route := findRouteNodeByBackend(t, snapshot, "web:80")
+	assertEdge(t, snapshot, nodeID(models.NodeKindIngress, "default", "web"), route.ID, "defines")
+	assertEdge(t, snapshot, route.ID, nodeID(models.NodeKindService, "default", "web"), "routes")
+	assertNoEdge(t, snapshot, nodeID(models.NodeKindIngress, "default", "web"), nodeID(models.NodeKindService, "default", "web"), "routes")
 	assertEdge(t, snapshot, nodeID(models.NodeKindService, "default", "web"), nodeID(models.NodeKindPod, "default", "web-abc"), "selects")
 }
 
@@ -227,13 +230,10 @@ func TestBuildTopologyRoutesIngressWithNamedBackendPort(t *testing.T) {
 		nil,
 	)
 
-	assertEdge(
-		t,
-		snapshot,
-		nodeID(models.NodeKindIngress, "default", "api"),
-		nodeID(models.NodeKindService, "default", "api"),
-		"routes",
-	)
+	route := findRouteNodeByBackend(t, snapshot, "api:http")
+	assertEdge(t, snapshot, nodeID(models.NodeKindIngress, "default", "api"), route.ID, "defines")
+	assertEdge(t, snapshot, route.ID, nodeID(models.NodeKindService, "default", "api"), "routes")
+	assertNoEdge(t, snapshot, nodeID(models.NodeKindIngress, "default", "api"), nodeID(models.NodeKindService, "default", "api"), "routes")
 }
 
 func TestBuildTopologyCreatesOneRouteNodePerIngressBackend(t *testing.T) {
