@@ -236,6 +236,139 @@ func TestBuildTopologyRoutesIngressWithNamedBackendPort(t *testing.T) {
 	)
 }
 
+func TestBuildTopologyCreatesOneRouteNodePerIngressBackend(t *testing.T) {
+	className := "nginx"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "web",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					Host: "app.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: pathTypePtr(networkingv1.PathTypePrefix),
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "frontend",
+											Port: networkingv1.ServiceBackendPort{Name: "http"},
+										},
+									},
+								},
+								{
+									Path:     "/api",
+									PathType: pathTypePtr(networkingv1.PathTypePrefix),
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "backend",
+											Port: networkingv1.ServiceBackendPort{Number: 8080},
+										},
+									},
+								},
+							},
+						},
+					},
+				}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+		}},
+		[]*corev1.Service{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "frontend"},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "frontend"},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 80}},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "backend"},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "backend"},
+					Ports:    []corev1.ServicePort{{Port: 8080}},
+				},
+			},
+		},
+		[]*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "frontend-abc", Labels: map[string]string{"app": "frontend"}},
+				Status: corev1.PodStatus{
+					Phase:      corev1.PodRunning,
+					Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "backend-abc", Labels: map[string]string{"app": "backend"}},
+				Status: corev1.PodStatus{
+					Phase:      corev1.PodRunning,
+					Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+				},
+			},
+		},
+	)
+
+	frontendRoute := findRouteNodeByBackend(t, snapshot, "frontend:http")
+	backendRoute := findRouteNodeByBackend(t, snapshot, "backend:8080")
+	ingressID := nodeID(models.NodeKindIngress, "default", "web")
+
+	assertEdge(t, snapshot, ingressID, frontendRoute.ID, "defines")
+	assertEdge(t, snapshot, frontendRoute.ID, nodeID(models.NodeKindService, "default", "frontend"), "routes")
+	assertEdge(t, snapshot, ingressID, backendRoute.ID, "defines")
+	assertEdge(t, snapshot, backendRoute.ID, nodeID(models.NodeKindService, "default", "backend"), "routes")
+}
+
+func TestBuildTopologyDiagnosesMissingServicePortOnIngressRoute(t *testing.T) {
+	className := "nginx"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "api",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: "api",
+										Port: networkingv1.ServiceBackendPort{Name: "http"},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{ObjectMeta: metav1.ObjectMeta{Name: className}}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api"},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{{Name: "grpc", Port: 9090}},
+			},
+		}},
+		nil,
+	)
+
+	route := findRouteNodeByBackend(t, snapshot, "api:http")
+	if route.Data.Status != "Error" {
+		t.Fatalf("expected route status Error, got %q", route.Data.Status)
+	}
+	if route.Data.Properties["severity"] != "error" {
+		t.Fatalf("expected route severity error, got %#v", route.Data.Properties)
+	}
+}
+
 func TestBuildTopologyEndpointSliceTargetRefWinsOverAddressLookup(t *testing.T) {
 	snapshot := BuildTopology(
 		nil,
@@ -509,6 +642,21 @@ func findNode(t *testing.T, snapshot models.TopologySnapshot, id string) models.
 	}
 	t.Fatalf("missing node %q; got %#v", id, snapshot.Nodes)
 	return models.Node{}
+}
+
+func findRouteNodeByBackend(t *testing.T, snapshot models.TopologySnapshot, backend string) models.Node {
+	t.Helper()
+	for _, node := range snapshot.Nodes {
+		if node.Data.Kind == models.NodeKindRoute && node.Data.Properties["backend"] == backend {
+			return node
+		}
+	}
+	t.Fatalf("missing route node for backend %q; got %#v", backend, snapshot.Nodes)
+	return models.Node{}
+}
+
+func pathTypePtr(value networkingv1.PathType) *networkingv1.PathType {
+	return &value
 }
 
 func assertEdge(t *testing.T, snapshot models.TopologySnapshot, source, target, kind string) {

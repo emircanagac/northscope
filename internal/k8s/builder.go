@@ -42,6 +42,7 @@ func BuildTopologyWithResources(
 	podsByName := make(map[string]*corev1.Pod, len(pods))
 	podsByIP := make(map[string]*corev1.Pod, len(pods))
 	servicePodsCache := make(map[string][]*corev1.Pod, len(services))
+	endpointStatsByService := collectEndpointStats(flattenEndpointSlices(endpointSlices))
 
 	for _, ingressClass := range ingressClasses {
 		ingressClassesByName[ingressClass.Name] = ingressClass
@@ -134,6 +135,23 @@ func BuildTopologyWithResources(
 				"IngressClass",
 			)
 		}
+		controllerClassName := ingressControllerClassName(ingress, ingressClassesByName)
+		for _, route := range ingressRoutes(ingress) {
+			svc := servicesByKey[namespacedKey(ingress.Namespace, route.ServiceName)]
+			pods := servicePodsCache[namespacedKey(ingress.Namespace, route.ServiceName)]
+			diagnosis := diagnoseIngressRoute(ingress, route, controllerClassName, svc, pods, endpointStatsByService[namespacedKey(ingress.Namespace, route.ServiceName)])
+			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
+			builder.addIngressRoute(ingress, route, diagnosis)
+			builder.addEdge(
+				nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
+				routeID,
+				"defines",
+				route.EdgeLabel(),
+			)
+			if svc != nil {
+				builder.addEdge(routeID, nodeID(models.NodeKindService, svc.Namespace, svc.Name), "routes", "HTTP backend")
+			}
+		}
 		for _, backendName := range ingressBackendServiceNames(ingress) {
 			svc, ok := servicesByKey[namespacedKey(ingress.Namespace, backendName)]
 			if !ok {
@@ -201,6 +219,56 @@ func flattenEndpointSlices(endpointLists [][]*discoveryv1.EndpointSlice) []*disc
 		endpointSlices = append(endpointSlices, list...)
 	}
 	return endpointSlices
+}
+
+type endpointStats struct {
+	Total       int
+	Usable      int
+	Ready       int
+	Serving     int
+	Terminating int
+	Slices      []string
+}
+
+func collectEndpointStats(endpointSlices []*discoveryv1.EndpointSlice) map[string]endpointStats {
+	statsByService := map[string]endpointStats{}
+	for _, endpointSlice := range endpointSlices {
+		serviceName, ok := endpointSliceServiceName(endpointSlice)
+		if !ok {
+			continue
+		}
+		key := namespacedKey(endpointSlice.Namespace, serviceName)
+		stats := statsByService[key]
+		stats.Slices = append(stats.Slices, endpointSlice.Name)
+		for _, endpoint := range endpointSlice.Endpoints {
+			stats.Total++
+			ready := conditionPtrValue(endpoint.Conditions.Ready, true)
+			serving := conditionPtrValue(endpoint.Conditions.Serving, ready)
+			terminating := conditionPtrValue(endpoint.Conditions.Terminating, false)
+			if ready {
+				stats.Ready++
+			}
+			if serving {
+				stats.Serving++
+			}
+			if terminating {
+				stats.Terminating++
+			}
+			if ready && serving && !terminating {
+				stats.Usable++
+			}
+		}
+		sort.Strings(stats.Slices)
+		statsByService[key] = stats
+	}
+	return statsByService
+}
+
+func conditionPtrValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func endpointSlicePods(
@@ -386,6 +454,217 @@ func nodePortNameForID(port corev1.ServicePort) string {
 	return strconv.Itoa(int(port.Port))
 }
 
+type ingressRoute struct {
+	ID          string
+	Host        string
+	Path        string
+	PathType    string
+	ServiceName string
+	ServicePort networkingv1.ServiceBackendPort
+	IsDefault   bool
+}
+
+func (r ingressRoute) Name() string {
+	host := r.Host
+	if host == "" {
+		host = "*"
+	}
+	path := r.Path
+	if path == "" {
+		path = "/"
+	}
+	if r.IsDefault {
+		return "default -> " + r.ServiceName
+	}
+	return host + " " + path
+}
+
+func (r ingressRoute) EdgeLabel() string {
+	if r.IsDefault {
+		return "default"
+	}
+	return r.Name()
+}
+
+func (r ingressRoute) ServicePortLabel() string {
+	if r.ServicePort.Name != "" {
+		return r.ServicePort.Name
+	}
+	if r.ServicePort.Number != 0 {
+		return strconv.Itoa(int(r.ServicePort.Number))
+	}
+	return "unspecified"
+}
+
+type routeDiagnosis struct {
+	Status     string
+	Severity   string
+	Message    string
+	NextStep   string
+	Kubectl    string
+	Confidence string
+}
+
+func diagnoseIngressRoute(
+	ingress *networkingv1.Ingress,
+	route ingressRoute,
+	controllerClassName string,
+	service *corev1.Service,
+	servicePods []*corev1.Pod,
+	stats endpointStats,
+) routeDiagnosis {
+	baseKubectl := fmt.Sprintf("kubectl describe ingress %s -n %s", ingress.Name, ingress.Namespace)
+	if service == nil {
+		return routeDiagnosis{
+			Status:     "Error",
+			Severity:   "error",
+			Message:    fmt.Sprintf("Backend Service %q does not exist in namespace %q.", route.ServiceName, ingress.Namespace),
+			NextStep:   "Create the Service or fix the backend.service.name in the Ingress rule.",
+			Kubectl:    baseKubectl,
+			Confidence: "Certain",
+		}
+	}
+	if !serviceHasBackendPort(service, route.ServicePort) {
+		return routeDiagnosis{
+			Status:     "Error",
+			Severity:   "error",
+			Message:    fmt.Sprintf("Service %q has no port matching backend port %q.", service.Name, route.ServicePortLabel()),
+			NextStep:   "Check spec.ports[].name/port on the Service and the Ingress backend port.",
+			Kubectl:    fmt.Sprintf("kubectl get svc %s -n %s -o yaml", service.Name, service.Namespace),
+			Confidence: "Certain",
+		}
+	}
+	if controllerClassName == "" {
+		return routeDiagnosis{
+			Status:     "Warning",
+			Severity:   "warning",
+			Message:    "No matching IngressClass/controller was found for this Ingress.",
+			NextStep:   "Check ingressClassName, the default IngressClass, and the controller deployment.",
+			Kubectl:    baseKubectl,
+			Confidence: "Inferred",
+		}
+	}
+	if len(service.Spec.Selector) > 0 && len(servicePods) == 0 {
+		return routeDiagnosis{
+			Status:     "Error",
+			Severity:   "error",
+			Message:    fmt.Sprintf("Service %q selector matches 0 Pods.", service.Name),
+			NextStep:   "Compare Service selector labels with Pod labels in this namespace.",
+			Kubectl:    fmt.Sprintf("kubectl get svc %s -n %s -o yaml; kubectl get pods -n %s --show-labels", service.Name, service.Namespace, service.Namespace),
+			Confidence: "Certain",
+		}
+	}
+	readyPods := countReadyPods(servicePods)
+	if len(servicePods) > 0 && readyPods == 0 {
+		return routeDiagnosis{
+			Status:     "Error",
+			Severity:   "error",
+			Message:    fmt.Sprintf("Service %q selects Pods, but none are Ready.", service.Name),
+			NextStep:   "Inspect Pod readiness, container status, probes, and recent events.",
+			Kubectl:    fmt.Sprintf("kubectl get pods -n %s -l %s; kubectl describe pod -n %s -l %s", service.Namespace, labelSelectorForDisplay(service.Spec.Selector), service.Namespace, labelSelectorForDisplay(service.Spec.Selector)),
+			Confidence: "Certain",
+		}
+	}
+	if stats.Total > 0 && stats.Usable == 0 {
+		return routeDiagnosis{
+			Status:     "Error",
+			Severity:   "error",
+			Message:    fmt.Sprintf("Service %q has EndpointSlices, but 0 usable endpoints.", service.Name),
+			NextStep:   "Check EndpointSlice ready/serving/terminating conditions and Pod readiness.",
+			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide", service.Namespace, service.Name),
+			Confidence: "Certain",
+		}
+	}
+	if stats.Total == 0 && len(service.Spec.Selector) == 0 {
+		return routeDiagnosis{
+			Status:     "Warning",
+			Severity:   "warning",
+			Message:    fmt.Sprintf("Selector-less Service %q has no EndpointSlice data.", service.Name),
+			NextStep:   "Verify manually managed EndpointSlices or external backend wiring.",
+			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o yaml", service.Namespace, service.Name),
+			Confidence: "Certain",
+		}
+	}
+	if stats.Total == 0 && len(service.Spec.Selector) > 0 {
+		return routeDiagnosis{
+			Status:     "Warning",
+			Severity:   "warning",
+			Message:    fmt.Sprintf("Service %q has Ready Pods, but no EndpointSlice was observed.", service.Name),
+			NextStep:   "Check EndpointSlice RBAC and the endpoint slice controller if traffic still fails.",
+			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s", service.Namespace, service.Name),
+			Confidence: "Inferred",
+		}
+	}
+	if stats.Terminating > 0 {
+		return routeDiagnosis{
+			Status:     "Warning",
+			Severity:   "warning",
+			Message:    fmt.Sprintf("Service %q has %d terminating endpoint(s).", service.Name, stats.Terminating),
+			NextStep:   "Check rollout status and whether all remaining endpoints are serving.",
+			Kubectl:    fmt.Sprintf("kubectl rollout status deployment -n %s; kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide", service.Namespace, service.Namespace, service.Name),
+			Confidence: "Inferred",
+		}
+	}
+	return routeDiagnosis{
+		Status:     "Healthy",
+		Severity:   "ok",
+		Message:    fmt.Sprintf("Route resolves to Service %q with %d usable endpoint(s).", service.Name, maxInt(stats.Usable, readyPods)),
+		NextStep:   "If users still fail, verify controller logs, cloud/F5 load balancer health checks, TLS, and NetworkPolicy.",
+		Kubectl:    fmt.Sprintf("kubectl describe ingress %s -n %s; kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide", ingress.Name, ingress.Namespace, service.Namespace, service.Name),
+		Confidence: "Configured",
+	}
+}
+
+func serviceHasBackendPort(service *corev1.Service, backendPort networkingv1.ServiceBackendPort) bool {
+	for _, port := range service.Spec.Ports {
+		if backendPort.Name != "" && port.Name == backendPort.Name {
+			return true
+		}
+		if backendPort.Number != 0 && port.Port == backendPort.Number {
+			return true
+		}
+	}
+	return false
+}
+
+func countReadyPods(pods []*corev1.Pod) int {
+	ready := 0
+	for _, pod := range pods {
+		if podIsReady(pod) {
+			ready++
+		}
+	}
+	return ready
+}
+
+func podIsReady(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return pod.Status.Phase == corev1.PodRunning
+}
+
+func labelSelectorForDisplay(selector map[string]string) string {
+	if len(selector) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(selector))
+	for key, value := range selector {
+		parts = append(parts, key+"="+value)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
 type topologyBuilder struct {
 	nodesByID  map[string]models.Node
 	edgesByID  map[string]models.Edge
@@ -420,6 +699,47 @@ func (b *topologyBuilder) addIngress(ingress *networkingv1.Ingress) {
 			Name:       ingress.Name,
 			Status:     ingressStatus(ingress),
 			Metadata:   ingress.Labels,
+			Properties: properties,
+		},
+	})
+}
+
+func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route ingressRoute, diagnosis routeDiagnosis) {
+	properties := map[string]string{
+		"mode":        "configured",
+		"ingress":     displayName(ingress.Namespace, ingress.Name),
+		"backend":     route.ServiceName + ":" + route.ServicePortLabel(),
+		"service":     route.ServiceName,
+		"servicePort": route.ServicePortLabel(),
+		"diagnosis":   diagnosis.Message,
+		"nextStep":    diagnosis.NextStep,
+		"kubectl":     diagnosis.Kubectl,
+		"confidence":  diagnosis.Confidence,
+		"severity":    diagnosis.Severity,
+	}
+	if route.Host != "" {
+		properties["host"] = route.Host
+	}
+	if route.Path != "" {
+		properties["path"] = route.Path
+	}
+	if route.PathType != "" {
+		properties["pathType"] = route.PathType
+	}
+	if route.IsDefault {
+		properties["defaultBackend"] = "true"
+	}
+
+	b.addNode(models.Node{
+		ID:       ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID),
+		Type:     "northscopeNode",
+		Position: b.nextPosition(models.NodeKindRoute),
+		Data: models.NodeData{
+			Label:      route.Name(),
+			Kind:       models.NodeKindRoute,
+			Namespace:  ingress.Namespace,
+			Name:       route.Name(),
+			Status:     diagnosis.Status,
 			Properties: properties,
 		},
 	})
@@ -579,7 +899,7 @@ func (b *topologyBuilder) addPod(pod *corev1.Pod) {
 			Kind:       models.NodeKindPod,
 			Namespace:  pod.Namespace,
 			Name:       pod.Name,
-			Status:     string(pod.Status.Phase),
+			Status:     podStatus(pod),
 			Phase:      string(pod.Status.Phase),
 			Metadata:   pod.Labels,
 			Properties: properties,
@@ -828,6 +1148,60 @@ func ingressBackendServiceNames(ingress *networkingv1.Ingress) []string {
 	return names
 }
 
+func ingressRoutes(ingress *networkingv1.Ingress) []ingressRoute {
+	var routes []ingressRoute
+	add := func(host, path, pathType string, backend networkingv1.IngressBackend, isDefault bool) {
+		if backend.Service == nil || backend.Service.Name == "" {
+			return
+		}
+		route := ingressRoute{
+			Host:        host,
+			Path:        path,
+			PathType:    pathType,
+			ServiceName: backend.Service.Name,
+			ServicePort: backend.Service.Port,
+			IsDefault:   isDefault,
+		}
+		route.ID = safeID(strings.Join([]string{
+			boolRoutePart(isDefault),
+			host,
+			path,
+			pathType,
+			backend.Service.Name,
+			route.ServicePortLabel(),
+			strconv.Itoa(len(routes)),
+		}, "|"))
+		routes = append(routes, route)
+	}
+
+	if ingress.Spec.DefaultBackend != nil {
+		add("", "", "", *ingress.Spec.DefaultBackend, true)
+	}
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			add(rule.Host, path.Path, ingressPathType(path.PathType), path.Backend, false)
+		}
+	}
+	return routes
+}
+
+func ingressPathType(pathType *networkingv1.PathType) string {
+	if pathType == nil {
+		return ""
+	}
+	return string(*pathType)
+}
+
+func boolRoutePart(value bool) string {
+	if value {
+		return "default"
+	}
+	return "rule"
+}
+
 func ingressClassName(ingress *networkingv1.Ingress) string {
 	if ingress.Spec.IngressClassName != nil {
 		return *ingress.Spec.IngressClassName
@@ -847,6 +1221,29 @@ func serviceStatus(service *corev1.Service) string {
 		return "Pending"
 	}
 	return "Active"
+}
+
+func podStatus(pod *corev1.Pod) string {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Waiting != nil && status.State.Waiting.Reason != "" {
+			return status.State.Waiting.Reason
+		}
+		if status.State.Terminated != nil && status.State.Terminated.Reason != "" {
+			return status.State.Terminated.Reason
+		}
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status != corev1.ConditionTrue {
+			if condition.Reason != "" {
+				return condition.Reason
+			}
+			return "NotReady"
+		}
+	}
+	if pod.Status.Phase != "" {
+		return string(pod.Status.Phase)
+	}
+	return "Unknown"
 }
 
 func ingressHosts(ingress *networkingv1.Ingress) []string {
@@ -937,6 +1334,10 @@ func gatewayNodeID(namespace, name string) string {
 
 func routeNodeID(namespace, name, kind string) string {
 	return nodeID(models.NodeKindRoute, namespace, kind+":"+name)
+}
+
+func ingressRouteNodeID(namespace, ingressName, routeID string) string {
+	return nodeID(models.NodeKindRoute, namespace, "ingress:"+ingressName+":"+routeID)
 }
 
 func ingressLoadBalancerNodeID(namespace, name, address string) string {

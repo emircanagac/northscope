@@ -195,7 +195,7 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
   return (
     <div
       className={cx(
-        'group relative grid w-[220px] gap-3 rounded-lg border p-3 shadow-lg transition duration-150',
+        'group relative grid w-[250px] gap-3 rounded-lg border p-3 shadow-lg transition duration-150',
         selected && 'ring-2 ring-slate-900/20',
         hasError ? 'border-red-500 bg-red-50 shadow-red-200' : tone.card,
       )}
@@ -228,12 +228,12 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
               {status}
             </span>
           </div>
-          <div className="mt-2 break-words text-sm font-bold leading-tight text-slate-950">{data.name}</div>
+          <div className="mt-2 line-clamp-3 break-words text-sm font-bold leading-tight text-slate-950">{data.name}</div>
           {data.namespace ? <div className="mt-1 truncate text-xs font-medium text-slate-500">{data.namespace}</div> : null}
         </div>
       </div>
       {summaryLine ? (
-        <div className="truncate rounded-md bg-white/70 px-2 py-1 text-[11px] font-medium text-slate-600">
+        <div className="line-clamp-2 break-words rounded-md bg-white/70 px-2 py-1 text-[11px] font-medium text-slate-600">
           {summaryLine}
         </div>
       ) : null}

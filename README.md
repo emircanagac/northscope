@@ -4,13 +4,13 @@
 ![Go](https://img.shields.io/badge/go-1.22+-00ADD8.svg)
 ![Build Status](https://github.com/emircanagac/northscope/actions/workflows/ci.yml/badge.svg)
 
-**A lightweight, read-only Kubernetes north-south topology observer.**
+**A lightweight, read-only Kubernetes Ingress path debugger.**
 
-NorthScope visualizes north-south Kubernetes traffic paths without changing your cluster. It watches standard Kubernetes API resources, optionally reads Gateway API and F5 CIS resources when their CRDs are installed, builds a live topology graph, and serves a React Flow UI from a single Go binary.
+NorthScope visualizes configured north-south Kubernetes traffic paths without changing your cluster. It watches standard Kubernetes API resources, optionally reads Gateway API and F5 CIS resources when their CRDs are installed, builds a live route graph, and serves a React Flow UI from a single Go binary.
 
 ## Why NorthScope?
 
-Modern Kubernetes networking can become hard to reason about quickly: DNS, external load balancers, Gateway API, Ingress, controllers, NodePorts, Services, EndpointSlices, Nodes, and Pods all sit in the request path. NorthScope makes that path visible while keeping the cluster untouched.
+Modern Kubernetes ingress debugging can become slow quickly: you need to connect controller, host, path, backend Service, Service port, EndpointSlice, Pod readiness, and Node placement before you know where to look. NorthScope turns that configured path into a readable graph and points at likely breakpoints before you start running a long chain of `kubectl` commands.
 
 NorthScope does **not** use:
 
@@ -25,15 +25,17 @@ Instead, it uses the boring, reliable path: Kubernetes API `get`, `list`, and `w
 
 ## Features
 
-- Live DNS, external load balancer, Gateway, Ingress, Service, Node, and Pod topology visualization
+- Namespace-scoped Ingress route visualization: external edge -> controller -> Ingress -> host/path route -> Service -> Pod -> Node
+- Route-level diagnosis for missing Services, missing Service ports, selector mismatches, no Ready Pods, missing EndpointSlices, and unusable endpoints
+- Suggested first-look `kubectl` commands for each route
 - Gateway API discovery for GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and UDPRoute
 - F5 CIS discovery for IngressLink, VirtualServer, and TransportServer
 - Read-only by design: no mutating Kubernetes API calls
 - Real-time updates over WebSocket, with periodic refresh for optional dynamic CRDs
-- Interactive React Flow graph with full-cluster view, search, namespace filtering, and optional Ingress focus
+- Interactive React Flow UI with namespace selection, route list, path graph, and diagnosis panel
 - Single Go binary with embedded Vite/React frontend
 - Single container image, no extra in-cluster agents
-- EndpointSlice fallback for selector-less Services
+- EndpointSlice-aware backend checks, including selector-less Services
 
 ## Quick Start
 
@@ -147,9 +149,9 @@ It does not create, patch, update, delete, exec into, or proxy through workloads
 
 ## Project Status
 
-NorthScope is ready for early open-source testing as a read-only observer. It covers the common north-south path across DNS, external load balancers, Gateway API, Ingress, Services, EndpointSlices, Nodes, and Pods, plus F5 CIS CRDs when present.
+NorthScope is ready for early open-source testing as a read-only configured-path debugger. It covers the common north-south path across external load balancers, Gateway API, Ingress, Services, EndpointSlices, Nodes, and Pods, plus F5 CIS CRDs when present.
 
-It is still intentionally observational: NorthScope does not replace packet tracing, cloud load balancer inventory, or controller-specific diagnostics. Provider metadata is inferred from Kubernetes status and optional CRD fields, so exact cloud/F5 configuration should still be verified in the owning platform.
+It is still intentionally observational: NorthScope shows what Kubernetes configuration says should happen. It does not replace packet tracing, cloud load balancer inventory, live flow telemetry, or controller-specific diagnostics. Provider metadata is inferred from Kubernetes status and optional CRD fields, so exact cloud/F5 configuration should still be verified in the owning platform.
 
 ## License
 
