@@ -374,10 +374,7 @@ export default function App() {
   const hasSnapshot = Boolean(snapshot);
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
   const graphReady = visibleGraphNodes.length > 0;
-  const summary = useMemo(
-    () => summarizeKinds(visibleGraphNodes.filter((node) => kindOf(node) !== 'f5')),
-    [visibleGraphNodes],
-  );
+  const summary = useMemo(() => summarizeKinds(nodes), [nodes]);
 
   const headerStatusText = useMemo(() => {
     if (!snapshot) {
