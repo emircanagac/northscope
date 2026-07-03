@@ -3,10 +3,6 @@ kind: Ingress
 metadata:
   name: northscope
   namespace: northscope
-  annotations:
-    # Requires ExternalDNS or a similar DNS controller in the cluster.
-    # Change this hostname before applying.
-    external-dns.alpha.kubernetes.io/hostname: northscope.example.com
 spec:
   # Change this to your cluster's ingress class, for example: nginx, haproxy, traefik.
   ingressClassName: nginx

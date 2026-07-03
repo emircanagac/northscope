@@ -73,9 +73,8 @@ Before applying, edit `deploy/ingress.yaml` and set:
 
 - `spec.ingressClassName` to your ingress controller class
 - `spec.rules[0].host` to the hostname you want
-- `external-dns.alpha.kubernetes.io/hostname` if your cluster uses ExternalDNS
 
-If ExternalDNS is installed, it can create/update the DNS record for that hostname. Without ExternalDNS, create the DNS record manually and point it at your ingress controller or load balancer.
+If ExternalDNS is installed and your cluster requires explicit hostname annotations, add the annotation your DNS controller expects. Otherwise, create the DNS record manually and point it at your ingress controller or load balancer.
 
 NorthScope only needs read-only Kubernetes permissions. The included manifest creates a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`.
 
