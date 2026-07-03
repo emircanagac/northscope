@@ -3,6 +3,7 @@ import type { Edge, Node } from '@xyflow/react';
 
 export type NodeKind =
   | 'F5'
+  | 'ExternalEdge'
   | 'Internet'
   | 'DNS'
   | 'Gateway'

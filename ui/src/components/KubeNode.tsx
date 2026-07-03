@@ -11,6 +11,15 @@ function kindTone(kind: NodeKind): {
   badge: string;
   initials: string;
 } {
+  if (kind === 'ExternalEdge') {
+    return {
+      card: 'border-slate-400 bg-white shadow-slate-200',
+      icon: 'bg-slate-900 text-white',
+      badge: 'bg-slate-900 text-white',
+      initials: 'EX',
+    };
+  }
+
   if (kind === 'F5') {
     return {
       card: 'border-slate-400 bg-white shadow-slate-200',
@@ -142,7 +151,18 @@ function shouldShowStatus(data: TopologyNode['data'], status: string): boolean {
   return Boolean(status && status !== 'Unknown');
 }
 
+function kindLabel(kind: NodeKind): string {
+  if (kind === 'ExternalEdge') {
+    return 'External';
+  }
+  return kind;
+}
+
 function portSummary(data: TopologyNode['data']): string | null {
+  if (data.kind === 'ExternalEdge') {
+    return data.properties?.role ?? null;
+  }
+
   if (data.kind === 'Pod') {
     return data.properties?.podIP ? `podIP ${data.properties.podIP}` : null;
   }
@@ -233,7 +253,7 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className={cx('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase', tone.badge)}>
-              {data.kind}
+              {kindLabel(data.kind)}
             </span>
             {showStatus ? (
               <span

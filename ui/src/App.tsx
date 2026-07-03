@@ -50,9 +50,14 @@ interface NamespaceTrafficGraph {
   routes: RouteItem[];
 }
 
+interface RouteGroup {
+  ingress: string;
+  routes: RouteItem[];
+}
+
 function statusLabel(status: string, hasSnapshot: boolean): string {
   if (status === 'connected') {
-    return hasSnapshot ? 'Live' : 'Syncing';
+    return hasSnapshot ? 'Live config' : 'Syncing';
   }
   if (status === 'connecting') {
     return 'Connecting';
@@ -68,13 +73,46 @@ function edgeKind(edge: TopologyEdge): string {
   return String(edge.data?.kind ?? '').toLowerCase();
 }
 
+function edgeLabel(kind: string): string {
+  switch (kind.toLowerCase()) {
+    case 'traffic':
+      return 'enters';
+    case 'forwards':
+      return 'forwards';
+    case 'controls':
+      return 'watches';
+    case 'defines':
+      return 'matches';
+    case 'routes':
+      return 'routes';
+    case 'selects':
+    case 'endpointslice':
+      return 'selects';
+    case 'runs_on':
+    case 'hosts':
+      return 'runs on';
+    case 'missing':
+      return 'missing';
+    default:
+      return kind;
+  }
+}
+
+function displayEdge(edge: TopologyEdge): TopologyEdge {
+  const kind = edgeKind(edge);
+  return {
+    ...edge,
+    label: edgeLabel(kind),
+  };
+}
+
 function syntheticEdge(source: string, target: string, kind: string, label: string): TopologyEdge {
   return {
     id: `${source}->${target}:${kind}`,
     source,
     target,
     type: 'smoothstep',
-    label,
+    label: label || edgeLabel(kind),
     animated: kind === 'traffic',
     data: { kind },
   };
@@ -86,13 +124,13 @@ function namespaceTrafficNode(namespace: string): TopologyNode {
     type: 'northscopeNode',
     position: { x: 0, y: 0 },
     data: {
-      label: 'F5 / External edge',
-      kind: 'F5',
+      label: 'External edge',
+      kind: 'ExternalEdge',
       namespace,
-      name: 'F5 edge',
+      name: 'External edge',
       status: 'Assumed entry',
       properties: {
-        role: 'visual traffic entry',
+        role: 'F5 / LB assumed entry',
       },
     },
   };
@@ -132,13 +170,13 @@ function layoutTrafficPath(nodes: TopologyNode[]): TopologyNode[] {
 
   for (const node of nodes) {
     const kind = kindOf(node);
-    const column = kind === 'f5' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
+    const column = kind === 'f5' || kind === 'externaledge' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
     columns.set(column, [...(columns.get(column) ?? []), node]);
   }
 
   return nodes.map((node) => {
     const kind = kindOf(node);
-    const column = kind === 'f5' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
+    const column = kind === 'f5' || kind === 'externaledge' ? 'f5' : columnOrder.includes(kind) ? kind : 'route';
     const columnNodes = [...(columns.get(column) ?? [])].sort((left, right) =>
       nodeDisplayName(left).localeCompare(nodeDisplayName(right)),
     );
@@ -212,6 +250,31 @@ function routeButtonClass(route: RouteItem, selected: boolean): string {
   ].join(' ');
 }
 
+function severityRank(severity: string): number {
+  const normalized = severity.toLowerCase();
+  if (normalized === 'error') return 0;
+  if (normalized === 'warning') return 1;
+  if (normalized === 'ok') return 2;
+  return 3;
+}
+
+function groupRoutes(routes: RouteItem[]): RouteGroup[] {
+  const groups = new Map<string, RouteItem[]>();
+  for (const route of routes) {
+    groups.set(route.ingress, [...(groups.get(route.ingress) ?? []), route]);
+  }
+  return Array.from(groups.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([ingress, group]) => ({
+      ingress,
+      routes: [...group].sort((left, right) => {
+        const severity = severityRank(left.severity) - severityRank(right.severity);
+        if (severity !== 0) return severity;
+        return left.name.localeCompare(right.name);
+      }),
+    }));
+}
+
 function downloadDebugBundle(namespace: string, route: RouteItem, snapshotVersion?: number): void {
   const bundle = {
     tool: 'northscope',
@@ -260,7 +323,7 @@ function buildNamespaceTrafficGraph(
     }
   };
   const addEdge = (edge: TopologyEdge) => {
-    graphEdges.set(edge.id, edge);
+    graphEdges.set(edge.id, displayEdge(edge));
   };
 
   for (const ingress of ingressNodes) {
@@ -269,8 +332,8 @@ function buildNamespaceTrafficGraph(
     const controllerEdges = edges.filter((edge) => edge.target === ingress.id && edgeKind(edge) === 'controls');
     if (controllerEdges.length === 0) {
       fallbackControllerUsed = true;
-      addEdge(syntheticEdge(f5Node.id, fallbackController.id, 'traffic', 'F5'));
-      addEdge(syntheticEdge(fallbackController.id, ingress.id, 'controls', 'IngressClass'));
+      addEdge(syntheticEdge(f5Node.id, fallbackController.id, 'traffic', 'enters'));
+      addEdge(syntheticEdge(fallbackController.id, ingress.id, 'controls', 'watches'));
     }
 
     for (const controllerEdge of controllerEdges) {
@@ -287,11 +350,11 @@ function buildNamespaceTrafficGraph(
         for (const nodePortEdge of nodePortEdges) {
           const nodePort = nodeById.get(nodePortEdge.source);
           addNode(nodePort);
-          addEdge(syntheticEdge(f5Node.id, nodePortEdge.source, 'traffic', 'F5'));
+          addEdge(syntheticEdge(f5Node.id, nodePortEdge.source, 'traffic', 'enters'));
           addEdge(nodePortEdge);
         }
       } else {
-        addEdge(syntheticEdge(f5Node.id, controllerEdge.source, 'traffic', 'F5'));
+        addEdge(syntheticEdge(f5Node.id, controllerEdge.source, 'traffic', 'enters'));
       }
 
       addEdge(controllerEdge);
@@ -360,7 +423,13 @@ function buildNamespaceTrafficGraph(
   return {
     nodes: layoutTrafficPath(uniqueById(Array.from(graphNodes.values()))),
     edges: Array.from(graphEdges.values()),
-    routes: routeItems.sort((left, right) => left.name.localeCompare(right.name)),
+    routes: routeItems.sort((left, right) => {
+      const severity = severityRank(left.severity) - severityRank(right.severity);
+      if (severity !== 0) return severity;
+      const ingress = left.ingress.localeCompare(right.ingress);
+      if (ingress !== 0) return ingress;
+      return left.name.localeCompare(right.name);
+    }),
   };
 }
 
@@ -385,6 +454,7 @@ export default function App() {
   const visibleGraphNodes = namespaceGraph.nodes;
   const visibleGraphEdges = namespaceGraph.edges;
   const routes = namespaceGraph.routes;
+  const routeGroups = useMemo(() => groupRoutes(routes), [routes]);
   const selectedRoute = routes.find((route) => route.id === selectedRouteId) ?? routes[0];
   const hasSnapshot = Boolean(snapshot);
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
@@ -394,7 +464,7 @@ export default function App() {
   const headerStatusText = useMemo(() => {
     if (!snapshot) {
       if (status === 'connected') {
-        return 'Connected; syncing Kubernetes cache';
+        return 'Connected; syncing Kubernetes config cache';
       }
       if (status === 'connecting') {
         return 'Opening topology stream';
@@ -415,13 +485,13 @@ export default function App() {
 
   const emptyStateTitle = useMemo(() => {
     if (!hasSnapshot) {
-      return status === 'connected' ? 'Connected; waiting for first Kubernetes snapshot' : 'Waiting for topology stream';
+      return status === 'connected' ? 'Connected; waiting for first Kubernetes config snapshot' : 'Waiting for topology stream';
     }
     if (!namespace) {
       return 'Select a namespace';
     }
     if (hasTopology) {
-      return 'No ingress paths in this namespace';
+      return 'No Ingress routes found in this namespace';
     }
     return 'Snapshot received, but no supported topology objects were found';
   }, [hasSnapshot, hasTopology, namespace, status]);
@@ -431,10 +501,10 @@ export default function App() {
       return 'If this stays here, check pod logs and read-only RBAC for ingresses, services, pods, endpointslices, and ingressclasses.';
     }
     if (!namespace) {
-      return 'NorthScope draws F5 -> controller -> ingress -> service -> pod -> node paths for the selected namespace.';
+      return 'NorthScope draws External edge -> controller -> ingress -> route -> service -> pod -> node paths for the selected namespace.';
     }
     if (hasTopology) {
-      return 'The namespace may not have an Ingress, backend Service, or selected Pods yet.';
+      return 'NorthScope needs Ingress objects with HTTP rules or default backends in the selected namespace.';
     }
     return 'The cluster may be empty for watched resources, or NorthScope may not have permission to list them.';
   }, [hasSnapshot, hasTopology, namespace]);
@@ -499,23 +569,31 @@ export default function App() {
               <div className="text-xs font-black uppercase tracking-wide text-slate-500">Ingress routes</div>
               <div className="mt-1 text-sm font-semibold text-slate-900">{routes.length} configured path{routes.length === 1 ? '' : 's'}</div>
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2.5">
-              {routes.map((route) => (
-                <button
-                  key={route.id}
-                  type="button"
-                  onClick={() => setSelectedRouteId(route.id)}
-                  className={routeButtonClass(route, route.id === selectedRoute?.id)}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate text-sm font-black">{route.name}</span>
-                    <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700">
-                      {route.status}
-                    </span>
+            <div className="min-h-0 flex-1 space-y-3 overflow-auto p-2.5">
+              {routeGroups.map((group) => (
+                <section key={group.ingress}>
+                  <div className="mb-1.5 truncate px-1 text-[11px] font-black uppercase tracking-wide text-slate-500">
+                    {group.ingress}
                   </div>
-                  <div className="mt-1 truncate text-xs font-semibold opacity-80">{route.backend}</div>
-                  <div className="mt-1 truncate text-[11px] opacity-70">{route.ingress}</div>
-                </button>
+                  <div className="space-y-2">
+                    {group.routes.map((route) => (
+                      <button
+                        key={route.id}
+                        type="button"
+                        onClick={() => setSelectedRouteId(route.id)}
+                        className={routeButtonClass(route, route.id === selectedRoute?.id)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate text-sm font-black">{route.name}</span>
+                          <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700">
+                            {route.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 truncate text-xs font-semibold opacity-80">{route.backend}</div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           </aside>
