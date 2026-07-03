@@ -198,7 +198,13 @@ export default function App() {
     return collectIngressSubgraphNodeIds(focusIngressId, nodes, edges);
   }, [edges, focusIngressId, nodes]);
 
+  const hasActiveGraphFilter = namespace !== '' || search.trim() !== '' || focusIngressId !== '';
+
   const filteredNodeIds = useMemo(() => {
+    if (!hasActiveGraphFilter) {
+      return new Set<string>();
+    }
+
     if (focusedNodeIds) {
       return focusedNodeIds;
     }
@@ -210,7 +216,7 @@ export default function App() {
         .filter((node) => nodeMatchesSearch(node, query))
         .map((node) => node.id),
     );
-  }, [focusedNodeIds, namespace, nodes, search]);
+  }, [focusedNodeIds, hasActiveGraphFilter, namespace, nodes, search]);
 
   const graphNodes = useMemo(() => {
     const sourceNodes = nodes.filter((node) => filteredNodeIds.has(node.id));
@@ -258,6 +264,51 @@ export default function App() {
       : `${nodes.length} total`
     : 'Waiting';
   const focusedLabel = selectedIngress ? `Focused: ${nodeDisplayName(selectedIngress)}` : 'Full topology';
+  const headerStatusText = useMemo(() => {
+    if (!snapshot) {
+      if (status === 'connected') {
+        return 'Connected; syncing Kubernetes cache';
+      }
+      if (status === 'connecting') {
+        return 'Opening topology stream';
+      }
+      return 'Waiting for topology';
+    }
+    if (graphReady) {
+      return `${visibleGraphNodes.length} nodes / ${visibleGraphEdges.length} edges`;
+    }
+    if (hasTopology && !hasActiveGraphFilter) {
+      return 'Choose a namespace, search, or ingress focus to draw topology';
+    }
+    if (hasTopology) {
+      return 'No topology matches filters';
+    }
+    return 'Snapshot received: 0 supported objects';
+  }, [graphReady, hasActiveGraphFilter, hasTopology, snapshot, status, visibleGraphEdges.length, visibleGraphNodes.length]);
+  const emptyStateTitle = useMemo(() => {
+    if (!hasSnapshot) {
+      return status === 'connected' ? 'Connected; waiting for first Kubernetes snapshot' : 'Waiting for topology stream';
+    }
+    if (hasTopology && !hasActiveGraphFilter) {
+      return 'Choose what to inspect';
+    }
+    if (hasTopology) {
+      return 'No topology matches filters';
+    }
+    return 'Snapshot received, but no supported topology objects were found';
+  }, [hasActiveGraphFilter, hasSnapshot, hasTopology, status]);
+  const emptyStateDescription = useMemo(() => {
+    if (!hasSnapshot) {
+      return 'If this stays here, check pod logs and read-only RBAC for ingresses, services, pods, endpointslices, and ingressclasses.';
+    }
+    if (hasTopology && !hasActiveGraphFilter) {
+      return 'Select a namespace, search by host/service/pod/VIP, or focus an ingress to render a readable graph.';
+    }
+    if (hasTopology) {
+      return 'Clear search, namespace, controller, or ingress focus to widen the graph.';
+    }
+    return 'The cluster may be empty for watched resources, or NorthScope may not have permission to list them.';
+  }, [hasActiveGraphFilter, hasSnapshot, hasTopology]);
 
   useEffect(() => {
     setNodes(graphNodes);
@@ -270,21 +321,7 @@ export default function App() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="mr-2 min-w-[170px]">
             <div className="text-sm font-black tracking-tight">NorthScope</div>
-            <div className="text-[11px] font-medium text-slate-500">
-              {snapshot
-                ? graphReady
-                  ? `${visibleGraphNodes.length} nodes / ${visibleGraphEdges.length} edges`
-                  : hasTopology
-                    ? 'No topology matches filters'
-                    : 'Snapshot received: 0 supported objects'
-                : status === 'connected'
-                  ? 'Connected; syncing Kubernetes cache'
-                  : status === 'connecting'
-                    ? 'Opening topology stream'
-                  : namespace
-                    ? `No topology matches ${namespace}`
-                    : 'Waiting for topology'}
-            </div>
+            <div className="text-[11px] font-medium text-slate-500">{headerStatusText}</div>
             <div className="mt-1 flex max-w-[760px] flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">DNS {clusterSummary.dns}</span>
               <span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">LB {clusterSummary.loadBalancers}</span>
@@ -425,20 +462,10 @@ export default function App() {
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center pt-[124px]">
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white/90 px-6 py-5 text-center shadow-sm">
             <div className="text-base font-bold text-slate-900">
-              {!hasSnapshot
-                ? status === 'connected'
-                  ? 'Connected; waiting for first Kubernetes snapshot'
-                  : 'Waiting for topology stream'
-                : hasTopology
-                  ? 'No topology matches filters'
-                  : 'Snapshot received, but no supported topology objects were found'}
+              {emptyStateTitle}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-              {!hasSnapshot
-                ? 'If this stays here, check pod logs and read-only RBAC for ingresses, services, pods, endpointslices, and ingressclasses.'
-                : hasTopology
-                ? 'Clear search, namespace, controller, or ingress focus to widen the graph.'
-                : 'The cluster may be empty for watched resources, or NorthScope may not have permission to list them.'}
+              {emptyStateDescription}
             </div>
           </div>
         </div>

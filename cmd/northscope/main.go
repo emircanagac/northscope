@@ -44,6 +44,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	log.Printf("NorthScope application started; waiting for Kubernetes topology cache")
+
 	go func() {
 		if err := watcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("kubernetes watcher stopped: %v", err)
@@ -53,7 +55,7 @@ func main() {
 	httpServer := server.New(*addr, watcher, staticFS)
 
 	go func() {
-		log.Printf("NorthScope HTTP server listening on %s", *addr)
+		log.Printf("NorthScope started: HTTP server listening on %s; readiness endpoint is /readyz", *addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("http server failed: %v", err)
 		}
