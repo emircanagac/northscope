@@ -6,6 +6,7 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  type ReactFlowInstance,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -708,6 +709,7 @@ export default function App() {
   const [namespace, setNamespace] = useState('');
   const [selectedRouteId, setSelectedRouteId] = useState('');
   const [topologyMode, setTopologyMode] = useState<TopologyMode>('simple');
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<TopologyNode, TopologyEdge> | null>(null);
   const [flowNodes, setNodes, onNodesChange] = useNodesState<TopologyNode>([]);
   const [flowEdges, setEdges, onEdgesChange] = useEdgesState<TopologyEdge>([]);
 
@@ -731,7 +733,8 @@ export default function App() {
     if (topologyMode !== 'simple') {
       return visibleGraphNodes;
     }
-    return filterNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? '');
+    const selectedNodes = filterNodesByRoute(visibleGraphNodes, selectedRoute?.id ?? '', selectedRoute?.hostLaneId ?? '');
+    return layoutTrafficPath(selectedNodes, topologyMode);
   }, [selectedRoute?.hostLaneId, selectedRoute?.id, topologyMode, visibleGraphNodes]);
   const displayGraphEdges = useMemo(() => {
     if (topologyMode !== 'simple') {
@@ -782,6 +785,17 @@ export default function App() {
     setNodes(focusedGraphNodes);
     setEdges(focusedGraphEdges);
   }, [focusedGraphEdges, focusedGraphNodes, setEdges, setNodes]);
+
+  useEffect(() => {
+    if (!flowInstance || flowNodes.length === 0) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      void flowInstance.fitView({ padding: topologyMode === 'simple' ? 0.28 : 0.18, duration: 180 });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [flowEdges, flowInstance, flowNodes, selectedRoute?.id, topologyMode]);
 
   useEffect(() => {
     if (!routes.some((route) => route.id === selectedRouteId)) {
@@ -896,6 +910,7 @@ export default function App() {
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            onInit={setFlowInstance}
             fitView
             fitViewOptions={{ padding: 0.18 }}
           >
