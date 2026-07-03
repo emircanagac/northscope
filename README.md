@@ -63,6 +63,20 @@ Then open:
 http://localhost:8080
 ```
 
+Or expose it through your ingress controller:
+
+```bash
+kubectl apply -f deploy/ingress.yaml
+```
+
+Before applying, edit `deploy/ingress.yaml` and set:
+
+- `spec.ingressClassName` to your ingress controller class
+- `spec.rules[0].host` to the hostname you want
+- `external-dns.alpha.kubernetes.io/hostname` if your cluster uses ExternalDNS
+
+If ExternalDNS is installed, it can create/update the DNS record for that hostname. Without ExternalDNS, create the DNS record manually and point it at your ingress controller or load balancer.
+
 NorthScope only needs read-only Kubernetes permissions. The included manifest creates a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`.
 
 The default manifest uses this image:
