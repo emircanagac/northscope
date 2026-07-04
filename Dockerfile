@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-alpine AS ui-deps
+FROM node:26-alpine AS ui-deps
 WORKDIR /src/ui
 COPY ui/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit
