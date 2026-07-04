@@ -1,0 +1,48 @@
+name: Bug report
+description: Report an install, topology, or UI problem
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve NorthScope. Please include enough cluster context to reproduce the issue without exposing sensitive data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the unexpected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NorthScope version
+      description: Image tag, commit SHA, or chart version.
+      placeholder: ghcr.io/emircanagac/northscope:latest
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes version
+      placeholder: v1.30.x
+  - type: input
+    id: controller
+    attributes:
+      label: Ingress controller
+      placeholder: nginx, haproxy, traefik, f5, contour, istio, other
+  - type: textarea
+    id: manifests
+    attributes:
+      label: Minimal Kubernetes objects
+      description: Share sanitized Ingress, Service, Pod/Deployment, and relevant EndpointSlice details if possible.
+      render: yaml
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or logs
+      description: Add UI screenshots, browser console output, or NorthScope logs.

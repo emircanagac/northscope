@@ -174,6 +174,17 @@ get, list, watch
 
 It does not create, patch, update, delete, exec into, or proxy through workloads.
 
+## Community
+
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Governance](GOVERNANCE.md)
+- [Maintainers](MAINTAINERS.md)
+- [Security Policy](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Changelog](CHANGELOG.md)
+- [Roadmap](ROADMAP.md)
+
 ## Project Status
 
 NorthScope is in pre-beta validation. The core Ingress topology workflow is usable, but the project still needs more real-cluster screenshots, installation feedback, and scenario testing before a v0.1.0 beta release. Its primary workflow is Kubernetes Ingress debugging: pick a namespace, select an Ingress+host group, and inspect the configured traffic path. Multiple paths under the same host are drawn together because they represent one host entry point.
