@@ -4,13 +4,13 @@
 ![Go](https://img.shields.io/badge/go-1.22+-00ADD8.svg)
 ![Build Status](https://github.com/emircanagac/northscope/actions/workflows/ci.yml/badge.svg)
 
-**A lightweight, read-only Kubernetes Ingress path debugger.**
+**A lightweight, read-only Kubernetes Ingress traffic path debugger.**
 
-NorthScope visualizes configured north-south Kubernetes traffic paths without changing your cluster. It watches standard Kubernetes API resources, optionally reads Gateway API and F5 CIS resources when their CRDs are installed, builds a live route graph, and serves a React Flow UI from a single Go binary.
+NorthScope visualizes configured north-south Kubernetes traffic paths without changing your cluster. It watches standard Kubernetes API resources, groups traffic by Ingress and host, and shows the path from the assumed external load balancer entry to the controller, Ingress, Service, and backend Pods. Optional Gateway API and F5 CIS resources are discovered as supporting context when their CRDs are installed.
 
 ## Why NorthScope?
 
-Modern Kubernetes ingress debugging can become slow quickly: you need to connect controller, host, path, backend Service, Service port, EndpointSlice, Pod readiness, and Node placement before you know where to look. NorthScope turns that configured path into a readable graph and points at likely breakpoints before you start running a long chain of `kubectl` commands.
+Modern Kubernetes ingress debugging can become slow quickly: you need to connect controller, host, path, backend Service, Service port, EndpointSlice, Pod readiness, and Node placement before you know where to look. NorthScope keeps the default view intentionally simple, so the first screen answers: "for this host, where is traffic supposed to go?"
 
 NorthScope does **not** use:
 
@@ -25,14 +25,15 @@ Instead, it uses the boring, reliable path: Kubernetes API `get`, `list`, and `w
 
 ## Features
 
-- Namespace-scoped Ingress route visualization: external edge -> controller -> Ingress -> host/path route -> Service -> Pod -> Node
+- Namespace-scoped Ingress traffic visualization grouped as `Ingress + host -> paths`
+- Simple mode: `F5 / LB -> NodePort if present -> Controller -> Ingress -> Service -> Pod summary`
+- Expanded mode for deeper debugging with host/route, individual Pod, Node, and EndpointSlice context
 - Route-level diagnosis for missing Services, missing Service ports, selector mismatches, no Ready Pods, missing EndpointSlices, and unusable endpoints
-- Suggested first-look `kubectl` commands for each route
-- Gateway API discovery for GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and UDPRoute
-- F5 CIS discovery for IngressLink, VirtualServer, and TransportServer
+- Gateway API discovery for GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, and UDPRoute as optional context
+- F5 CIS discovery for IngressLink, VirtualServer, and TransportServer as optional context
 - Read-only by design: no mutating Kubernetes API calls
 - Real-time updates over WebSocket, with periodic refresh for optional dynamic CRDs
-- Interactive React Flow UI with namespace selection, route list, path graph, and diagnosis panel
+- Interactive React Flow UI with namespace selection, host/path groups, Simple mode, and Expanded mode
 - Single Go binary with embedded Vite/React frontend
 - Single container image, no extra in-cluster agents
 - EndpointSlice-aware backend checks, including selector-less Services
@@ -162,9 +163,17 @@ It does not create, patch, update, delete, exec into, or proxy through workloads
 
 ## Project Status
 
-NorthScope is ready for early open-source testing as a read-only configured-path debugger. It covers the common north-south path across external load balancers, Gateway API, Ingress, Services, EndpointSlices, Nodes, and Pods, plus F5 CIS CRDs when present.
+NorthScope is ready for early open-source beta testing as a read-only configured-path debugger. Its primary workflow is Kubernetes Ingress debugging: pick a namespace, select an Ingress+host group, and inspect the configured traffic path. Multiple paths under the same host are drawn together because they represent one host entry point.
 
-It is still intentionally observational: NorthScope shows what Kubernetes configuration says should happen. It does not replace packet tracing, cloud load balancer inventory, live flow telemetry, or controller-specific diagnostics. Provider metadata is inferred from Kubernetes status and optional CRD fields, so exact cloud/F5 configuration should still be verified in the owning platform.
+It is intentionally observational: NorthScope shows what Kubernetes configuration says should happen. It does not replace packet tracing, cloud load balancer inventory, live flow telemetry, or controller-specific diagnostics. Gateway API and F5 CIS objects are currently used as discovered context, not as a replacement for provider/controller-specific tooling.
+
+Recommended beta validation scenarios:
+
+- one Ingress, one host, multiple paths
+- two different hosts in the same namespace
+- the same host used by different Ingress objects
+- NodePort and LoadBalancer ingress controller Services
+- missing backend Service, missing Service port, and zero Ready Pods
 
 ## License
 
