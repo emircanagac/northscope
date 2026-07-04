@@ -90,6 +90,20 @@ The project is standardized on **NorthScope** as the display name and `northscop
 
 The image is published automatically by GitHub Actions on every push to `main`. If the repository or GHCR package is private, either make the package public or configure an image pull secret in your cluster before applying the manifest.
 
+## Repository Layout
+
+```text
+.github/workflows/   GitHub Actions CI and image publishing
+charts/northscope/   Helm chart, the source of truth for installation
+cmd/northscope/      Go binary entrypoint
+internal/k8s/        Kubernetes watchers, discovery, and topology building
+internal/models/     Shared API and topology models
+internal/server/     HTTP server, health checks, and WebSocket stream
+ui/                  React UI embedded into the Go binary
+```
+
+NorthScope follows the usual Go application layout: `cmd/northscope` contains the executable entrypoint, while `internal` contains private backend packages. The frontend stays under `ui` because it is shipped as an embedded UI inside the same binary rather than as a separate service.
+
 ## Local Development
 
 NorthScope has a Go backend and a Vite React frontend under `ui/`.
