@@ -36,7 +36,7 @@ Instead, it uses the boring, reliable path: Kubernetes API `get`, `list`, and `w
 - Interactive React Flow UI with namespace selection, host/path groups, Simple mode, and Expanded mode
 - Single Go binary with embedded Vite/React frontend
 - Single container image, no extra in-cluster agents
-- Simple Helm chart plus static manifests for installation
+- Helm chart for installation
 - EndpointSlice-aware backend checks, including selector-less Services
 
 ## Quick Start
@@ -65,7 +65,7 @@ helm uninstall northscope -n northscope
 
 ## Install Options
 
-The Helm chart is the recommended install path while the project is in pre-beta validation.
+The Helm chart is the source of truth for installing NorthScope while the project is in pre-beta validation.
 
 Expose NorthScope through your ingress controller:
 
@@ -78,26 +78,7 @@ helm upgrade --install northscope ./charts/northscope \
   --set ingress.hosts[0].host=northscope.example.com
 ```
 
-Static manifests are also available:
-
-```bash
-kubectl apply -f deploy/install.yaml
-```
-
-To expose the manifest install, edit `deploy/ingress.yaml` for your ingress class and hostname, then apply it:
-
-```bash
-kubectl apply -f deploy/ingress.yaml
-```
-
-Remove the static manifests:
-
-```bash
-kubectl delete -f deploy/ingress.yaml --ignore-not-found
-kubectl delete -f deploy/install.yaml
-```
-
-NorthScope only needs read-only Kubernetes permissions. The Helm chart and static manifest create a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`. The default image is:
+NorthScope only needs read-only Kubernetes permissions. The Helm chart creates a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`. The default image is:
 
 ```text
 ghcr.io/emircanagac/northscope:latest
