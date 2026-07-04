@@ -9,7 +9,7 @@ FROM ui-deps AS ui-build
 COPY ui/ ./
 RUN npm run build
 
-FROM golang:1.22-alpine AS go-base
+FROM golang:1.26-alpine AS go-base
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum ./
