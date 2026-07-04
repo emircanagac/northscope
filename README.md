@@ -36,11 +36,57 @@ Instead, it uses the boring, reliable path: Kubernetes API `get`, `list`, and `w
 - Interactive React Flow UI with namespace selection, host/path groups, Simple mode, and Expanded mode
 - Single Go binary with embedded Vite/React frontend
 - Single container image, no extra in-cluster agents
+- Simple Helm chart plus static manifests for installation
 - EndpointSlice-aware backend checks, including selector-less Services
 
 ## Quick Start
 
-Install NorthScope into your cluster:
+Install NorthScope with Helm:
+
+```bash
+helm upgrade --install northscope ./charts/northscope \
+  --namespace northscope \
+  --create-namespace
+```
+
+Wait for the deployment:
+
+```bash
+kubectl -n northscope rollout status deploy/northscope
+```
+
+Open a local tunnel:
+
+```bash
+kubectl -n northscope port-forward svc/northscope 8080:80
+```
+
+Then open:
+
+```text
+http://localhost:8080
+```
+
+Uninstall:
+
+```bash
+helm uninstall northscope -n northscope
+```
+
+Expose it through your ingress controller:
+
+```bash
+helm upgrade --install northscope ./charts/northscope \
+  --namespace northscope \
+  --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=northscope.example.com
+```
+
+Before exposing it publicly, set the ingress class, hostname, TLS, and any DNS/controller annotations your cluster requires.
+
+You can also install the static manifests directly:
 
 ```bash
 kubectl apply -f deploy/install.yaml
@@ -64,7 +110,7 @@ Then open:
 http://localhost:8080
 ```
 
-Or expose it through your ingress controller:
+Or expose the manifest install through your ingress controller:
 
 ```bash
 kubectl apply -f deploy/ingress.yaml
@@ -77,9 +123,16 @@ Before applying, edit `deploy/ingress.yaml` and set:
 
 If ExternalDNS is installed and your cluster requires explicit hostname annotations, add the annotation your DNS controller expects. Otherwise, create the DNS record manually and point it at your ingress controller or load balancer.
 
-NorthScope only needs read-only Kubernetes permissions. The included manifest creates a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`.
+Uninstall the static manifests:
 
-The default manifest uses this image:
+```bash
+kubectl delete -f deploy/ingress.yaml --ignore-not-found
+kubectl delete -f deploy/install.yaml
+```
+
+NorthScope only needs read-only Kubernetes permissions. The Helm chart and static manifest create a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`.
+
+The default install uses this image:
 
 ```text
 ghcr.io/emircanagac/northscope:latest
@@ -163,11 +216,11 @@ It does not create, patch, update, delete, exec into, or proxy through workloads
 
 ## Project Status
 
-NorthScope is ready for early open-source beta testing as a read-only configured-path debugger. Its primary workflow is Kubernetes Ingress debugging: pick a namespace, select an Ingress+host group, and inspect the configured traffic path. Multiple paths under the same host are drawn together because they represent one host entry point.
+NorthScope is in pre-beta validation. The core Ingress topology workflow is usable, but the project still needs more real-cluster screenshots, installation feedback, and scenario testing before a v0.1.0 beta release. Its primary workflow is Kubernetes Ingress debugging: pick a namespace, select an Ingress+host group, and inspect the configured traffic path. Multiple paths under the same host are drawn together because they represent one host entry point.
 
-It is intentionally observational: NorthScope shows what Kubernetes configuration says should happen. It does not replace packet tracing, cloud load balancer inventory, live flow telemetry, or controller-specific diagnostics. Gateway API and F5 CIS objects are currently used as discovered context, not as a replacement for provider/controller-specific tooling.
+It is intentionally observational: NorthScope shows what Kubernetes configuration says should happen. It does not replace packet tracing, cloud load balancer inventory, live flow telemetry, or controller-specific diagnostics. The `F5 / LB` entry is an assumed external edge unless Kubernetes resources expose richer context. Gateway API and F5 CIS objects are currently used as discovered context, not as a replacement for provider/controller-specific tooling.
 
-Recommended beta validation scenarios:
+Recommended validation scenarios:
 
 - one Ingress, one host, multiple paths
 - two different hosts in the same namespace
