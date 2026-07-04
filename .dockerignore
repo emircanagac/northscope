@@ -1,0 +1,10 @@
+.git
+.github
+.agents
+graphify-out
+.graphify*
+bin
+ui/node_modules
+ui/dist
+Dockerfile
+*.log
