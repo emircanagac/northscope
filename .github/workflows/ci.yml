@@ -43,7 +43,7 @@ jobs:
       - name: Extract Docker metadata
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/emircanagac/northscope
           tags: |
