@@ -41,39 +41,33 @@ Instead, it uses the boring, reliable path: Kubernetes API `get`, `list`, and `w
 
 ## Quick Start
 
-Install NorthScope with Helm:
+Fastest way to try NorthScope:
 
 ```bash
 helm upgrade --install northscope ./charts/northscope \
   --namespace northscope \
   --create-namespace
-```
-
-Wait for the deployment:
-
-```bash
 kubectl -n northscope rollout status deploy/northscope
-```
-
-Open a local tunnel:
-
-```bash
 kubectl -n northscope port-forward svc/northscope 8080:80
 ```
 
-Then open:
+Open:
 
 ```text
 http://localhost:8080
 ```
 
-Uninstall:
+Remove it:
 
 ```bash
 helm uninstall northscope -n northscope
 ```
 
-Expose it through your ingress controller:
+## Install Options
+
+The Helm chart is the recommended install path while the project is in pre-beta validation.
+
+Expose NorthScope through your ingress controller:
 
 ```bash
 helm upgrade --install northscope ./charts/northscope \
@@ -84,55 +78,26 @@ helm upgrade --install northscope ./charts/northscope \
   --set ingress.hosts[0].host=northscope.example.com
 ```
 
-Before exposing it publicly, set the ingress class, hostname, TLS, and any DNS/controller annotations your cluster requires.
-
-You can also install the static manifests directly:
+Static manifests are also available:
 
 ```bash
 kubectl apply -f deploy/install.yaml
 ```
 
-Wait for the deployment:
-
-```bash
-kubectl -n northscope rollout status deploy/northscope
-```
-
-Open a local tunnel:
-
-```bash
-kubectl -n northscope port-forward svc/northscope 8080:80
-```
-
-Then open:
-
-```text
-http://localhost:8080
-```
-
-Or expose the manifest install through your ingress controller:
+To expose the manifest install, edit `deploy/ingress.yaml` for your ingress class and hostname, then apply it:
 
 ```bash
 kubectl apply -f deploy/ingress.yaml
 ```
 
-Before applying, edit `deploy/ingress.yaml` and set:
-
-- `spec.ingressClassName` to your ingress controller class
-- `spec.rules[0].host` to the hostname you want
-
-If ExternalDNS is installed and your cluster requires explicit hostname annotations, add the annotation your DNS controller expects. Otherwise, create the DNS record manually and point it at your ingress controller or load balancer.
-
-Uninstall the static manifests:
+Remove the static manifests:
 
 ```bash
 kubectl delete -f deploy/ingress.yaml --ignore-not-found
 kubectl delete -f deploy/install.yaml
 ```
 
-NorthScope only needs read-only Kubernetes permissions. The Helm chart and static manifest create a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`.
-
-The default install uses this image:
+NorthScope only needs read-only Kubernetes permissions. The Helm chart and static manifest create a `ServiceAccount`, `ClusterRole`, `ClusterRoleBinding`, `Deployment`, and `Service`. The default image is:
 
 ```text
 ghcr.io/emircanagac/northscope:latest
