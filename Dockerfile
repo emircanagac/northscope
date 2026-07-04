@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-alpine AS ui-deps
+FROM node:26-alpine AS ui-deps
 WORKDIR /src/ui
 COPY ui/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit
@@ -9,7 +9,7 @@ FROM ui-deps AS ui-build
 COPY ui/ ./
 RUN npm run build
 
-FROM golang:1.22-alpine AS go-base
+FROM golang:1.26-alpine AS go-base
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum ./
