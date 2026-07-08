@@ -9,6 +9,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 - Added production access guidance for TLS, edge authentication, and NetworkPolicy usage.
 - Added reliability validation for Kubernetes client QPS/Burst defaults, watcher cancellation, snapshot build failures, and large topology builds.
 - Added topology regression coverage for the same host appearing in multiple Ingress objects.
+- Strengthened topology regression coverage for named Ingress backend ports and missing Service port diagnostics.
 - RBAC was tightened by removing unused core Endpoints permissions, and the security policy now documents the exact read-only permission surface.
 - Helm chart now supports an optional PodDisruptionBudget for multi-replica installations.
 - Helm chart now supports an optional NetworkPolicy for production installations.

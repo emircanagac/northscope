@@ -602,6 +602,13 @@ func TestBuildTopologyDiagnosesMissingServicePortOnIngressRoute(t *testing.T) {
 	if route.Data.Properties["severity"] != "error" {
 		t.Fatalf("expected route severity error, got %#v", route.Data.Properties)
 	}
+	if route.Data.Properties["diagnosis"] != `Service "api" has no port matching backend port "http".` {
+		t.Fatalf("expected missing named port diagnosis, got %#v", route.Data.Properties)
+	}
+	if route.Data.Properties["kubectl"] != "kubectl get svc api -n default -o yaml" {
+		t.Fatalf("expected service kubectl command, got %#v", route.Data.Properties)
+	}
+	assertEdge(t, snapshot, route.ID, nodeID(models.NodeKindService, "default", "api"), "routes")
 }
 
 func TestBuildTopologyEndpointSliceTargetRefWinsOverAddressLookup(t *testing.T) {
