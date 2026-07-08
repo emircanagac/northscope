@@ -392,6 +392,73 @@ func TestBuildTopologyLoadBalancerIngressControllerForwardsToController(t *testi
 	assertEdge(t, snapshot, nodePortID, controllerID, "forwards")
 }
 
+func TestBuildTopologyNodePortIngressControllerForwardsToController(t *testing.T) {
+	snapshot := BuildTopology(
+		nil,
+		[]*networkingv1.IngressClass{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "nginx"},
+				Spec: networkingv1.IngressClassSpec{
+					Controller: "k8s.io/ingress-nginx",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "haproxy"},
+				Spec: networkingv1.IngressClassSpec{
+					Controller: "haproxy.org/ingress-controller",
+				},
+			},
+		},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "haproxy-controller",
+				Name:      "haproxy-ingress-controller",
+			},
+			Spec: corev1.ServiceSpec{
+				Type: corev1.ServiceTypeNodePort,
+				Ports: []corev1.ServicePort{{
+					Name:     "http",
+					Port:     80,
+					NodePort: 30080,
+				}},
+			},
+		}},
+		nil,
+	)
+
+	nodePortID := nodePortNodeID("haproxy-controller", "haproxy-ingress-controller", corev1.ServicePort{Name: "http", Port: 80})
+	assertNode(t, snapshot, nodePortID)
+	assertEdge(t, snapshot, nodePortID, controllerNodeID("haproxy"), "forwards")
+	assertNoEdge(t, snapshot, nodePortID, controllerNodeID("nginx"), "forwards")
+}
+
+func TestBuildTopologyLoadBalancerIngressControllerWithoutNodePortBalancesController(t *testing.T) {
+	snapshot := BuildTopology(
+		nil,
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: "traefik"},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "traefik.io/ingress-controller",
+			},
+		}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "traefik",
+				Name:      "traefik-ingress-controller",
+			},
+			Spec: corev1.ServiceSpec{
+				Type:  corev1.ServiceTypeLoadBalancer,
+				Ports: []corev1.ServicePort{{Name: "web", Port: 80}},
+			},
+		}},
+		nil,
+	)
+
+	loadBalancerID := loadBalancerNodeID("traefik", "traefik-ingress-controller")
+	assertNode(t, snapshot, loadBalancerID)
+	assertEdge(t, snapshot, loadBalancerID, controllerNodeID("traefik"), "balances")
+}
+
 func TestBuildTopologyDoesNotGuessIngressControllerWhenMultipleClassesExist(t *testing.T) {
 	snapshot := BuildTopology(
 		[]*networkingv1.Ingress{{
