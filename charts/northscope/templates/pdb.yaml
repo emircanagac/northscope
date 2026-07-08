@@ -1,0 +1,17 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "northscope.fullname" . }}
+  labels:
+    {{- include "northscope.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "northscope.selectorLabels" . | nindent 6 }}
+  {{- if ne (toString .Values.podDisruptionBudget.maxUnavailable) "" }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+{{- end }}

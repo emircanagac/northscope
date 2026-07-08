@@ -1,0 +1,26 @@
+.DS_Store
+*.log
+
+# Go
+bin/
+dist/
+.cache/
+
+# UI
+ui/node_modules/
+ui/dist/
+ui/tsconfig.tsbuildinfo
+
+# Graphify local analysis outputs
+graphify-out/
+.graphify*
+.helm-repo/
+
+# Local editor and env files
+.env
+.env.*
+.idea/
+.vscode/
+
+# Local agent notes
+AGENTS.md

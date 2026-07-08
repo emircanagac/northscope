@@ -1,0 +1,21 @@
+NorthScope has been installed.
+
+Release:
+  {{ .Release.Name }} in namespace {{ .Release.Namespace }}
+
+{{ if .Values.ingress.enabled }}
+Ingress:
+{{ range .Values.ingress.hosts }}
+  {{ if $.Values.ingress.tls }}https://{{ .host }}{{ else }}http://{{ .host }}{{ end }}
+{{ end }}
+
+{{ else }}
+Port-forward:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "northscope.fullname" . }} 18080:{{ .Values.service.port }}
+
+Open:
+  http://localhost:18080
+{{ end }}
+
+Uninstall:
+  helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}
