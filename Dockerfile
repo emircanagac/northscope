@@ -7,7 +7,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit
 
 FROM ui-deps AS ui-build
 COPY ui/ ./
-RUN npm run build
+RUN npm run test:ui-smoke && npm run build
 
 FROM golang:1.26-alpine AS go-base
 WORKDIR /src
@@ -23,8 +23,12 @@ FROM go-base AS verify
 RUN cp go.mod /tmp/go.mod \
   && cp go.sum /tmp/go.sum \
   && go mod tidy \
-  && cmp -s go.mod /tmp/go.mod \
-  && cmp -s go.sum /tmp/go.sum
+  && tr -d '\r' </tmp/go.mod >/tmp/go.mod.normalized \
+  && tr -d '\r' <go.mod >/tmp/go.mod.after \
+  && tr -d '\r' </tmp/go.sum >/tmp/go.sum.normalized \
+  && tr -d '\r' <go.sum >/tmp/go.sum.after \
+  && cmp -s /tmp/go.mod.normalized /tmp/go.mod.after \
+  && cmp -s /tmp/go.sum.normalized /tmp/go.sum.after
 RUN --mount=type=cache,target=/go/pkg/mod \
   --mount=type=cache,target=/root/.cache/go-build \
   go test ./...

@@ -1,5 +1,4 @@
 import type { TopologyEdge, TopologyNode } from './hooks/useTopologyStream';
-import { nodeDisplayName } from './topologyView';
 
 export type TopologyMode = 'simple' | 'expanded';
 
@@ -46,6 +45,14 @@ function nodeColumn(node: TopologyNode): string {
   return kind;
 }
 
+function nodeDisplayNameForLayout(node: TopologyNode): string {
+  if (node.data.namespace) {
+    return `${node.data.namespace}/${node.data.name}`;
+  }
+
+  return node.data.name;
+}
+
 export function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): TopologyNode[] {
   const columnOrder =
     mode === 'simple'
@@ -75,7 +82,7 @@ export function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): To
       const rightLane = String(right.data.properties?.visualLane ?? '');
       const laneOrder = leftLane.localeCompare(rightLane);
       if (laneOrder !== 0) return laneOrder;
-      return nodeDisplayName(left).localeCompare(nodeDisplayName(right));
+      return nodeDisplayNameForLayout(left).localeCompare(nodeDisplayNameForLayout(right));
     });
     const rowIndex = Math.max(0, columnNodes.findIndex((item) => item.id === node.id));
 

@@ -13,6 +13,8 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 - Added topology regression coverage for NodePort and LoadBalancer ingress controller Services.
 - Added legacy core Endpoints fallback and ExternalName Service visualization for backend topology.
 - Added regression coverage for common nginx, Traefik, HAProxy, and F5-related topology paths plus missing Service and zero-ready Pod diagnostics.
+- Added UI smoke coverage for All namespaces, route search, host route selection, and Simple/Expanded layout mode.
+- Improved dense route list and narrow-sidebar behavior for long ingress, host, and backend labels.
 - RBAC was tightened by removing unused core Endpoints permissions, and the security policy now documents the exact read-only permission surface.
 - Helm chart now supports an optional PodDisruptionBudget for multi-replica installations.
 - Helm chart now supports an optional NetworkPolicy for production installations.

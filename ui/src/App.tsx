@@ -38,6 +38,13 @@ import {
   type RouteItem,
   type TopologyMode,
 } from './trafficGraph';
+import {
+  namespaceEscapeAction,
+  namespaceInputValue,
+  resolveNamespaceEnterSelection,
+  routeMatchesSearch,
+  type NamespaceOption,
+} from './uiState';
 
 const nodeTypes = {
   northscopeNode: KubeNode,
@@ -71,11 +78,6 @@ interface HostRouteRecord {
   displayService: TopologyNode;
   host: string;
   hostLaneId: string;
-}
-
-interface NamespaceOption {
-  name: string;
-  ingressCount: number;
 }
 
 function statusLabel(status: string, hasSnapshot: boolean): string {
@@ -192,17 +194,6 @@ function syntheticControllerNode(namespace: string): TopologyNode {
       },
     },
   };
-}
-
-function routeMatchesSearch(route: RouteItem, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) {
-    return true;
-  }
-
-  return [route.namespace, route.ingress, route.host, route.path, route.backend, route.status]
-    .filter(Boolean)
-    .some((value) => value.toLowerCase().includes(normalized));
 }
 
 function routeHost(route: TopologyNode): string {
@@ -795,7 +786,7 @@ export default function App() {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <aside className="flex w-[312px] shrink-0 flex-col border-r border-slate-200 bg-white">
+        <aside className="flex w-[312px] max-w-[48vw] shrink-0 flex-col border-r border-slate-200 bg-white">
           <section className="shrink-0 border-b border-slate-100 px-4 py-3">
             <label className="text-[11px] font-black uppercase tracking-wide text-slate-500" htmlFor="namespace-search">
               Namespace
@@ -803,7 +794,7 @@ export default function App() {
             <div className="relative mt-1.5">
               <input
                 id="namespace-search"
-                value={namespacePickerOpen ? namespaceQuery : namespace || 'All namespaces'}
+                value={namespaceInputValue(namespace, namespacePickerOpen, namespaceQuery)}
                 placeholder={namespacePlaceholder}
                 onFocus={() => {
                   setNamespaceQuery(namespace);
@@ -827,23 +818,21 @@ export default function App() {
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
-                    const normalizedNamespaceQuery = namespaceQuery.trim().toLowerCase();
-                    if (!normalizedNamespaceQuery || normalizedNamespaceQuery === 'all' || normalizedNamespaceQuery === 'all namespaces') {
+                    const selectedNamespace = resolveNamespaceEnterSelection(namespaceQuery, filteredNamespaceOptions);
+                    if (selectedNamespace === '') {
                       clearNamespace();
                       return;
                     }
-                    const selected = filteredNamespaceOptions[0]?.name;
-                    if (selected) {
-                      selectNamespace(selected);
+                    if (selectedNamespace) {
+                      selectNamespace(selectedNamespace);
                     }
                   }
                   if (event.key === 'Escape') {
-                    if (!namespaceQuery.trim()) {
+                    const action = namespaceEscapeAction(namespace, namespaceQuery, namespacePickerOpen);
+                    if (action === 'clear') {
                       clearNamespace();
-                    } else if (namespacePickerOpen && namespaceQuery.trim() !== namespace) {
-                      setNamespaceQuery(namespace);
                     } else {
-                      clearNamespace();
+                      setNamespaceQuery(namespace);
                     }
                     setNamespacePickerOpen(false);
                   }
@@ -952,7 +941,7 @@ export default function App() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-black">{namespace ? group.ingress : `${group.namespace} / ${group.ingress}`}</div>
+                          <div className="break-words text-sm font-black leading-snug">{namespace ? group.ingress : `${group.namespace} / ${group.ingress}`}</div>
                           <div className="mt-0.5 text-[11px] font-semibold opacity-75">
                             {routesByHost.length} host{routesByHost.length === 1 ? '' : 's'} / {group.routes.length} path
                             {group.routes.length === 1 ? '' : 's'}
@@ -978,7 +967,7 @@ export default function App() {
                               }`}
                             >
                               <div className="flex min-w-0 items-center justify-between gap-2 px-0.5">
-                                <div className="truncate text-xs font-black">{host}</div>
+                                <div className="min-w-0 break-words text-xs font-black leading-snug">{host}</div>
                                 <div className="flex shrink-0 items-center gap-1">
                                   {hostRoutes.length > 1 ? (
                                     <span className="text-[10px] font-black uppercase text-slate-500">{hostRoutes.length} paths</span>
@@ -998,7 +987,7 @@ export default function App() {
                                     <span className="min-w-0 truncate text-xs font-black">{route.path}</span>
                                     <span className="shrink-0 text-[10px] font-bold uppercase opacity-70">{route.status}</span>
                                   </div>
-                                  <div className="mt-0.5 truncate text-[11px] font-semibold opacity-75">{route.backend}</div>
+                                  <div className="mt-0.5 break-words text-[11px] font-semibold leading-snug opacity-75">{route.backend}</div>
                                 </div>
                               ))}
                             </button>
