@@ -128,7 +128,7 @@ function kindTone(kind: NodeKind): {
     };
   }
 
-  if (kind === 'EndpointSlice') {
+  if (kind === 'Endpoint' || kind === 'EndpointSlice') {
     return {
       card: 'border-cyan-300 bg-cyan-50 shadow-cyan-100',
       icon: 'bg-cyan-700 text-white',
@@ -210,7 +210,7 @@ function kindLabel(kind: NodeKind): string {
   if (kind === 'PodGroup') {
     return 'Pods';
   }
-  if (kind === 'EndpointSlice') {
+  if (kind === 'Endpoint' || kind === 'EndpointSlice') {
     return 'Endpoint';
   }
   return kind;
@@ -290,6 +290,9 @@ function portSummary(data: TopologyNode['data']): string | null {
   }
   if (data.properties?.address) {
     parts.push(data.properties.address);
+  }
+  if (data.properties?.externalName) {
+    parts.push(data.properties.externalName);
   }
   if (data.properties?.hostnames) {
     parts.push(data.properties.hostnames);

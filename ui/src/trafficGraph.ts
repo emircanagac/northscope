@@ -41,6 +41,7 @@ function nodeColumn(node: TopologyNode): string {
   const kind = kindOf(node);
   if (kind === 'f5' || kind === 'externaledge') return 'f5';
   if (kind === 'podgroup') return 'pod';
+  if (kind === 'endpoint') return 'endpoint';
   if (kind === 'endpointslice') return 'endpoint';
   return kind;
 }

@@ -14,6 +14,7 @@ export type NodeKind =
   | 'Node'
   | 'Route'
   | 'Service'
+  | 'Endpoint'
   | 'EndpointSlice'
   | 'Pod'
   | 'PodGroup';

@@ -37,8 +37,8 @@ The default Helm chart creates a ClusterRole with read-only permissions only. No
 
 | API group | Resources | Purpose |
 | --- | --- | --- |
-| core | namespaces, nodes, pods, services | Namespace filtering, backend Pod readiness, Service routing, and Node placement |
-| discovery.k8s.io | endpointslices | Endpoint and selector-less Service resolution |
+| core | namespaces, nodes, pods, services, endpoints | Namespace filtering, backend Pod readiness, Service routing, legacy Endpoints fallback, and Node placement |
+| discovery.k8s.io | endpointslices | EndpointSlice and selector-less Service resolution |
 | networking.k8s.io | ingressclasses, ingresses | Ingress ownership, hosts, paths, and controller mapping |
 | gateway.networking.k8s.io | gatewayclasses, gateways, grpcroutes, httproutes, tcproutes, tlsroutes, udproutes | Optional Gateway API topology when the CRDs are installed |
 | cis.f5.com | ingresslinks, virtualservers, transportservers | Optional F5 CIS topology when the CRDs are installed |
@@ -55,7 +55,7 @@ NorthScope can display internal topology metadata, including:
 - Service names and ports
 - Pod names, readiness state, and Pod IPs
 - Node names
-- EndpointSlice addresses, including external endpoint IPs for selector-less Services
+- EndpointSlice and legacy Endpoints addresses, including external endpoint IPs for selector-less Services
 - Gateway API and F5 CIS object names and selected routing fields when those CRDs are present
 
 Run NorthScope behind trusted internal access controls. If exposed through Ingress, configure TLS and authentication at the ingress controller, identity proxy, or platform edge. See [Production Access](docs/production-access.md) for examples.

@@ -81,7 +81,7 @@ export function collectIngressSubgraphNodeIds(
         stack.push(edge.target);
       } else if (currentKind === 'route' && edgeKind === 'routes') {
         stack.push(edge.target);
-      } else if (currentKind === 'service' && (edgeKind === 'selects' || edgeKind === 'endpointslice')) {
+      } else if (currentKind === 'service' && (edgeKind === 'selects' || edgeKind === 'endpointslice' || edgeKind === 'endpoint' || edgeKind === 'externalname')) {
         stack.push(edge.target);
       } else if (currentKind === 'nodeport' && edgeKind === 'forwards') {
         stack.push(edge.target);

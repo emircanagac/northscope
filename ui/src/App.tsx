@@ -109,8 +109,11 @@ function edgeLabel(kind: string): string {
     case 'routes':
       return 'routes';
     case 'selects':
-    case 'endpointslice':
       return 'selects';
+    case 'endpointslice':
+    case 'endpoint':
+    case 'externalname':
+      return 'targets';
     case 'runs_on':
     case 'hosts':
       return 'runs on';
@@ -417,7 +420,7 @@ function buildNamespaceTrafficGraph(
   };
   const podsForService = (service: TopologyNode): TopologyNode[] =>
     edges
-      .filter((edge) => edge.source === service.id && ['selects', 'endpointslice'].includes(edgeKind(edge)))
+      .filter((edge) => edge.source === service.id && ['selects', 'endpointslice', 'endpoint', 'externalname'].includes(edgeKind(edge)))
       .map((edge) => nodeById.get(edge.target))
       .filter((node): node is TopologyNode => {
         if (!node) {
@@ -427,9 +430,9 @@ function buildNamespaceTrafficGraph(
       });
   const externalEndpointsForService = (service: TopologyNode): TopologyNode[] =>
     edges
-      .filter((edge) => edge.source === service.id && edgeKind(edge) === 'endpointslice')
+      .filter((edge) => edge.source === service.id && ['endpointslice', 'endpoint', 'externalname'].includes(edgeKind(edge)))
       .map((edge) => nodeById.get(edge.target))
-      .filter((node): node is TopologyNode => kindOf(node) === 'endpointslice' && node?.data.namespace === service.data.namespace);
+      .filter((node): node is TopologyNode => ['endpointslice', 'endpoint'].includes(kindOf(node)) && node?.data.namespace === service.data.namespace);
 
   for (const ingress of ingressNodes) {
     const ingressNamespace = String(ingress.data.namespace ?? '');
@@ -502,14 +505,14 @@ function buildNamespaceTrafficGraph(
           addEdge(laneEdge(laneRoute, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
 
           const podEdges = edges.filter(
-            (edge) => edge.source === record.displayService.id && ['selects', 'endpointslice'].includes(edgeKind(edge)),
+            (edge) => edge.source === record.displayService.id && ['selects', 'endpointslice', 'endpoint', 'externalname'].includes(edgeKind(edge)),
           );
           for (const podEdge of podEdges) {
             const backend = nodeById.get(podEdge.target);
             if (!backend || backend.data.namespace !== record.displayService.data.namespace) {
               continue;
             }
-            if (kindOf(backend) === 'endpointslice') {
+            if (kindOf(backend) === 'endpointslice' || kindOf(backend) === 'endpoint') {
               const laneEndpoint = laneNode(backend, record.route.id);
               addNode(laneEndpoint);
               addEdge(laneEdge(laneService, laneEndpoint, edgeKind(podEdge)));
@@ -546,7 +549,7 @@ function buildNamespaceTrafficGraph(
               for (const endpoint of externalEndpoints) {
                 const laneEndpoint = laneNode(endpoint, record.route.id);
                 addNode(laneEndpoint);
-                addEdge(laneEdge(laneService, laneEndpoint, 'endpointslice'));
+                addEdge(laneEdge(laneService, laneEndpoint, 'endpoint'));
               }
             } else {
               const lanePodSummary = laneNode(
@@ -694,7 +697,7 @@ export default function App() {
 
   const emptyStateDescription = useMemo(() => {
     if (!hasSnapshot) {
-      return 'If this stays here, check pod logs and read-only RBAC for ingresses, services, pods, endpointslices, and ingressclasses.';
+      return 'If this stays here, check pod logs and read-only RBAC for ingresses, services, pods, endpointslices, endpoints, and ingressclasses.';
     }
     if (graphReady && filteredRoutes.length > 0 && !selectedHostGroup) {
       return 'Search by host, ingress, service, path, or namespace, then select a host route from the list.';

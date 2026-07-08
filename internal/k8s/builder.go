@@ -22,7 +22,7 @@ func BuildTopology(
 	pods []*corev1.Pod,
 	endpointSlices ...[]*discoveryv1.EndpointSlice,
 ) models.TopologySnapshot {
-	return BuildTopologyWithResources(ingresses, ingressClasses, services, pods, nil, nil, endpointSlices...)
+	return BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nil, nil, nil, flattenEndpointSlices(endpointSlices))
 }
 
 func BuildTopologyWithResources(
@@ -34,6 +34,19 @@ func BuildTopologyWithResources(
 	externalResources []ExternalResource,
 	endpointSlices ...[]*discoveryv1.EndpointSlice,
 ) models.TopologySnapshot {
+	return BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, nil, flattenEndpointSlices(endpointSlices))
+}
+
+func BuildTopologyWithResourcesAndEndpoints(
+	ingresses []*networkingv1.Ingress,
+	ingressClasses []*networkingv1.IngressClass,
+	services []*corev1.Service,
+	pods []*corev1.Pod,
+	nodes []*corev1.Node,
+	externalResources []ExternalResource,
+	endpoints []*corev1.Endpoints,
+	endpointSlices []*discoveryv1.EndpointSlice,
+) models.TopologySnapshot {
 	builder := newTopologyBuilder()
 	ingressClassesByName := make(map[string]*networkingv1.IngressClass, len(ingressClasses))
 	servicesByKey := make(map[string]*corev1.Service, len(services))
@@ -42,7 +55,9 @@ func BuildTopologyWithResources(
 	podsByName := make(map[string]*corev1.Pod, len(pods))
 	podsByIP := make(map[string]*corev1.Pod, len(pods))
 	servicePodsCache := make(map[string][]*corev1.Pod, len(services))
-	endpointStatsByService := collectEndpointStats(flattenEndpointSlices(endpointSlices))
+	endpointStatsByService := collectEndpointStats(endpointSlices)
+	endpointSliceServiceKeys := servicesWithEndpointSlices(endpointSlices)
+	mergeEndpointStats(endpointStatsByService, collectLegacyEndpointStats(endpoints), endpointSliceServiceKeys)
 
 	for _, ingressClass := range ingressClasses {
 		ingressClassesByName[ingressClass.Name] = ingressClass
@@ -72,6 +87,15 @@ func BuildTopologyWithResources(
 		servicesByKey[namespacedKey(svc.Namespace, svc.Name)] = svc
 		builder.addService(svc)
 		servicePodsCache[namespacedKey(svc.Namespace, svc.Name)] = matchingPodsForService(svc, podsByNamespace)
+		if svc.Spec.Type == corev1.ServiceTypeExternalName && svc.Spec.ExternalName != "" {
+			builder.addExternalNameEndpoint(svc)
+			builder.addEdge(
+				nodeID(models.NodeKindService, svc.Namespace, svc.Name),
+				externalNameNodeID(svc.Namespace, svc.Name),
+				"externalname",
+				"ExternalName",
+			)
+		}
 	}
 
 	for _, svc := range services {
@@ -175,7 +199,7 @@ func BuildTopologyWithResources(
 		}
 	}
 
-	for _, endpointSlice := range flattenEndpointSlices(endpointSlices) {
+	for _, endpointSlice := range endpointSlices {
 		svcName, ok := endpointSliceServiceName(endpointSlice)
 		if !ok {
 			continue
@@ -208,6 +232,36 @@ func BuildTopologyWithResources(
 		}
 	}
 
+	for _, endpoint := range endpoints {
+		svc, ok := servicesByKey[namespacedKey(endpoint.Namespace, endpoint.Name)]
+		if !ok || len(svc.Spec.Selector) > 0 {
+			continue
+		}
+		if _, hasEndpointSlice := endpointSliceServiceKeys[namespacedKey(endpoint.Namespace, endpoint.Name)]; hasEndpointSlice {
+			continue
+		}
+		for _, pod := range endpointPods(endpoint, podsByName, podsByIP) {
+			builder.addEdge(
+				nodeID(models.NodeKindService, svc.Namespace, svc.Name),
+				nodeID(models.NodeKindPod, pod.Namespace, pod.Name),
+				"endpoint",
+				"Endpoints",
+			)
+		}
+		for _, address := range endpointAddresses(endpoint) {
+			if endpointAddressReferencesPod(address.Address, endpoint.Namespace, podsByName, podsByIP) {
+				continue
+			}
+			builder.addLegacyEndpoint(endpoint, address)
+			builder.addEdge(
+				nodeID(models.NodeKindService, svc.Namespace, svc.Name),
+				legacyEndpointNodeID(endpoint.Namespace, endpoint.Name, address.Address.IP),
+				"endpoint",
+				"Endpoints",
+			)
+		}
+	}
+
 	return models.TopologySnapshot{
 		GeneratedAt: time.Now().UTC(),
 		Nodes:       builder.nodes(),
@@ -230,6 +284,11 @@ type endpointStats struct {
 	Serving     int
 	Terminating int
 	Slices      []string
+}
+
+type legacyEndpointAddress struct {
+	Address corev1.EndpointAddress
+	Ready   bool
 }
 
 func collectEndpointStats(endpointSlices []*discoveryv1.EndpointSlice) map[string]endpointStats {
@@ -264,6 +323,58 @@ func collectEndpointStats(endpointSlices []*discoveryv1.EndpointSlice) map[strin
 		statsByService[key] = stats
 	}
 	return statsByService
+}
+
+func collectLegacyEndpointStats(endpoints []*corev1.Endpoints) map[string]endpointStats {
+	statsByService := map[string]endpointStats{}
+	for _, item := range endpoints {
+		key := namespacedKey(item.Namespace, item.Name)
+		stats := statsByService[key]
+		stats.Slices = append(stats.Slices, item.Name)
+		for _, subset := range item.Subsets {
+			for range subset.Addresses {
+				stats.Total++
+				stats.Ready++
+				stats.Serving++
+				stats.Usable++
+			}
+			for range subset.NotReadyAddresses {
+				stats.Total++
+			}
+		}
+		sort.Strings(stats.Slices)
+		statsByService[key] = stats
+	}
+	return statsByService
+}
+
+func mergeEndpointStats(target, source map[string]endpointStats, skipKeys map[string]struct{}) {
+	for key, incoming := range source {
+		if _, skip := skipKeys[key]; skip {
+			continue
+		}
+		current := target[key]
+		current.Total += incoming.Total
+		current.Usable += incoming.Usable
+		current.Ready += incoming.Ready
+		current.Serving += incoming.Serving
+		current.Terminating += incoming.Terminating
+		current.Slices = append(current.Slices, incoming.Slices...)
+		sort.Strings(current.Slices)
+		target[key] = current
+	}
+}
+
+func servicesWithEndpointSlices(endpointSlices []*discoveryv1.EndpointSlice) map[string]struct{} {
+	services := map[string]struct{}{}
+	for _, endpointSlice := range endpointSlices {
+		serviceName, ok := endpointSliceServiceName(endpointSlice)
+		if !ok {
+			continue
+		}
+		services[namespacedKey(endpointSlice.Namespace, serviceName)] = struct{}{}
+	}
+	return services
 }
 
 func conditionPtrValue(value *bool, fallback bool) bool {
@@ -307,6 +418,62 @@ func endpointSlicePods(
 		return namespacedKey(pods[i].Namespace, pods[i].Name) < namespacedKey(pods[j].Namespace, pods[j].Name)
 	})
 	return pods
+}
+
+func endpointPods(endpoints *corev1.Endpoints, podsByName, podsByIP map[string]*corev1.Pod) []*corev1.Pod {
+	seen := map[string]*corev1.Pod{}
+	for _, address := range endpointAddresses(endpoints) {
+		if address.Address.TargetRef != nil && address.Address.TargetRef.Kind == "Pod" && address.Address.TargetRef.Name != "" {
+			namespace := address.Address.TargetRef.Namespace
+			if namespace == "" {
+				namespace = endpoints.Namespace
+			}
+			if pod, ok := podsByName[namespacedKey(namespace, address.Address.TargetRef.Name)]; ok {
+				seen[namespacedKey(pod.Namespace, pod.Name)] = pod
+				continue
+			}
+		}
+
+		if pod, ok := podsByIP[namespacedKey(endpoints.Namespace, address.Address.IP)]; ok {
+			seen[namespacedKey(pod.Namespace, pod.Name)] = pod
+		}
+	}
+
+	pods := make([]*corev1.Pod, 0, len(seen))
+	for _, pod := range seen {
+		pods = append(pods, pod)
+	}
+	sort.Slice(pods, func(i, j int) bool {
+		return namespacedKey(pods[i].Namespace, pods[i].Name) < namespacedKey(pods[j].Namespace, pods[j].Name)
+	})
+	return pods
+}
+
+func endpointAddresses(endpoints *corev1.Endpoints) []legacyEndpointAddress {
+	var addresses []legacyEndpointAddress
+	for _, subset := range endpoints.Subsets {
+		for _, address := range subset.Addresses {
+			addresses = append(addresses, legacyEndpointAddress{Address: address, Ready: true})
+		}
+		for _, address := range subset.NotReadyAddresses {
+			addresses = append(addresses, legacyEndpointAddress{Address: address})
+		}
+	}
+	return addresses
+}
+
+func endpointAddressReferencesPod(address corev1.EndpointAddress, namespace string, podsByName, podsByIP map[string]*corev1.Pod) bool {
+	if address.TargetRef != nil && address.TargetRef.Kind == "Pod" && address.TargetRef.Name != "" {
+		targetNamespace := address.TargetRef.Namespace
+		if targetNamespace == "" {
+			targetNamespace = namespace
+		}
+		if _, ok := podsByName[namespacedKey(targetNamespace, address.TargetRef.Name)]; ok {
+			return true
+		}
+	}
+	_, ok := podsByIP[namespacedKey(namespace, address.IP)]
+	return ok
 }
 
 func endpointSliceServiceName(endpointSlice *discoveryv1.EndpointSlice) (string, bool) {
@@ -394,7 +561,11 @@ func matchingIngressClassName(service *corev1.Service, pods []*corev1.Pod, ingre
 
 func serviceLooksLikeIngressController(service *corev1.Service, pods []*corev1.Pod) bool {
 	haystack := strings.ToLower(strings.Join(serviceIdentityTerms(service, pods), " "))
-	return strings.Contains(haystack, "ingress") || strings.Contains(haystack, "controller")
+	return strings.Contains(haystack, "ingress") ||
+		strings.Contains(haystack, "controller") ||
+		strings.Contains(haystack, "nginx") ||
+		strings.Contains(haystack, "traefik") ||
+		strings.Contains(haystack, "haproxy")
 }
 
 func serviceIdentityTerms(service *corev1.Service, pods []*corev1.Pod) []string {
@@ -556,6 +727,16 @@ func diagnoseIngressRoute(
 			Confidence: "Certain",
 		}
 	}
+	if service.Spec.Type == corev1.ServiceTypeExternalName && service.Spec.ExternalName != "" {
+		return routeDiagnosis{
+			Status:     "Healthy",
+			Severity:   "ok",
+			Message:    fmt.Sprintf("Route resolves to ExternalName Service %q targeting %q.", service.Name, service.Spec.ExternalName),
+			NextStep:   "If users still fail, verify external DNS, upstream reachability, TLS, and NetworkPolicy.",
+			Kubectl:    fmt.Sprintf("kubectl get svc %s -n %s -o yaml", service.Name, service.Namespace),
+			Confidence: "Configured",
+		}
+	}
 	if controllerClassName == "" {
 		return routeDiagnosis{
 			Status:     "Warning",
@@ -601,9 +782,9 @@ func diagnoseIngressRoute(
 		return routeDiagnosis{
 			Status:     "Warning",
 			Severity:   "warning",
-			Message:    fmt.Sprintf("Selector-less Service %q has no EndpointSlice data.", service.Name),
-			NextStep:   "Verify manually managed EndpointSlices or external backend wiring.",
-			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o yaml", service.Namespace, service.Name),
+			Message:    fmt.Sprintf("Selector-less Service %q has no EndpointSlice or Endpoints data.", service.Name),
+			NextStep:   "Verify manually managed EndpointSlices, legacy Endpoints, or external backend wiring.",
+			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o yaml; kubectl get endpoints %s -n %s -o yaml", service.Namespace, service.Name, service.Name, service.Namespace),
 			Confidence: "Certain",
 		}
 	}
@@ -611,9 +792,9 @@ func diagnoseIngressRoute(
 		return routeDiagnosis{
 			Status:     "Warning",
 			Severity:   "warning",
-			Message:    fmt.Sprintf("Service %q has Ready Pods, but no EndpointSlice was observed.", service.Name),
-			NextStep:   "Check EndpointSlice RBAC and the endpoint slice controller if traffic still fails.",
-			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s", service.Namespace, service.Name),
+			Message:    fmt.Sprintf("Service %q has Ready Pods, but no EndpointSlice or Endpoints data was observed.", service.Name),
+			NextStep:   "Check EndpointSlice/Endpoints RBAC and the endpoint controllers if traffic still fails.",
+			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s; kubectl get endpoints %s -n %s", service.Namespace, service.Name, service.Name, service.Namespace),
 			Confidence: "Inferred",
 		}
 	}
@@ -632,7 +813,7 @@ func diagnoseIngressRoute(
 		Severity:   "ok",
 		Message:    fmt.Sprintf("Route resolves to Service %q with %d usable endpoint(s).", service.Name, maxInt(stats.Usable, readyPods)),
 		NextStep:   "If users still fail, verify controller logs, cloud/F5 load balancer health checks, TLS, and NetworkPolicy.",
-		Kubectl:    fmt.Sprintf("kubectl describe ingress %s -n %s; kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide", ingress.Name, ingress.Namespace, service.Namespace, service.Name),
+		Kubectl:    fmt.Sprintf("kubectl describe ingress %s -n %s; kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide; kubectl get endpoints %s -n %s", ingress.Name, ingress.Namespace, service.Namespace, service.Name, service.Name, service.Namespace),
 		Confidence: "Configured",
 	}
 }
@@ -797,6 +978,9 @@ func (b *topologyBuilder) addService(service *corev1.Service) {
 
 	if service.Spec.ClusterIP != "" && service.Spec.ClusterIP != corev1.ClusterIPNone {
 		properties["clusterIP"] = service.Spec.ClusterIP
+	}
+	if service.Spec.Type == corev1.ServiceTypeExternalName && service.Spec.ExternalName != "" {
+		properties["externalName"] = service.Spec.ExternalName
 	}
 	if len(service.Spec.Ports) > 0 {
 		properties["ports"] = servicePorts(service)
@@ -965,6 +1149,65 @@ func (b *topologyBuilder) addExternalEndpoint(endpointSlice *discoveryv1.Endpoin
 			Namespace:  endpointSlice.Namespace,
 			Name:       address,
 			Status:     status,
+			Properties: properties,
+		},
+	})
+}
+
+func (b *topologyBuilder) addLegacyEndpoint(endpoints *corev1.Endpoints, address legacyEndpointAddress) {
+	if address.Address.IP == "" {
+		return
+	}
+
+	status := "Ready"
+	if !address.Ready {
+		status = "NotReady"
+	}
+	properties := map[string]string{
+		"address":      address.Address.IP,
+		"endpointType": "external",
+		"service":      displayName(endpoints.Namespace, endpoints.Name),
+		"source":       "Endpoints",
+	}
+	if address.Address.TargetRef != nil {
+		properties["targetRef"] = strings.Trim(address.Address.TargetRef.Kind+"/"+address.Address.TargetRef.Name, "/")
+	}
+
+	b.addNode(models.Node{
+		ID:       legacyEndpointNodeID(endpoints.Namespace, endpoints.Name, address.Address.IP),
+		Type:     "northscopeNode",
+		Position: b.nextPosition(models.NodeKindEndpoint),
+		Data: models.NodeData{
+			Label:      address.Address.IP,
+			Kind:       models.NodeKindEndpoint,
+			Namespace:  endpoints.Namespace,
+			Name:       address.Address.IP,
+			Status:     status,
+			Properties: properties,
+		},
+	})
+}
+
+func (b *topologyBuilder) addExternalNameEndpoint(service *corev1.Service) {
+	properties := map[string]string{
+		"externalName": service.Spec.ExternalName,
+		"endpointType": "externalName",
+		"service":      displayName(service.Namespace, service.Name),
+	}
+	if len(service.Spec.Ports) > 0 {
+		properties["ports"] = servicePorts(service)
+	}
+
+	b.addNode(models.Node{
+		ID:       externalNameNodeID(service.Namespace, service.Name),
+		Type:     "northscopeNode",
+		Position: b.nextPosition(models.NodeKindEndpoint),
+		Data: models.NodeData{
+			Label:      service.Spec.ExternalName,
+			Kind:       models.NodeKindEndpoint,
+			Namespace:  service.Namespace,
+			Name:       service.Spec.ExternalName,
+			Status:     "ExternalName",
 			Properties: properties,
 		},
 	})
@@ -1359,6 +1602,8 @@ func kindColumn(kind models.NodeKind) float64 {
 		return 760
 	case models.NodeKindService:
 		return 940
+	case models.NodeKindEndpoint:
+		return 1110
 	case models.NodeKindEndpointSlice:
 		return 1110
 	case models.NodeKindPod:
@@ -1401,6 +1646,14 @@ func ingressLoadBalancerNodeID(namespace, name, address string) string {
 
 func endpointNodeID(namespace, serviceName, sliceName, address string) string {
 	return nodeID(models.NodeKindEndpointSlice, namespace, serviceName+":"+sliceName+":"+safeID(address))
+}
+
+func legacyEndpointNodeID(namespace, serviceName, address string) string {
+	return nodeID(models.NodeKindEndpoint, namespace, serviceName+":endpoints:"+safeID(address))
+}
+
+func externalNameNodeID(namespace, serviceName string) string {
+	return nodeID(models.NodeKindEndpoint, namespace, serviceName+":externalname")
 }
 
 func gatewayLoadBalancerNodeID(namespace, name, address string) string {

@@ -17,7 +17,7 @@ Ingress debugging often means stitching together several commands:
 - which controller owns this Ingress?
 - which host and path matched?
 - which Service and port does it route to?
-- are there Ready Pods or usable EndpointSlices?
+- are there Ready Pods or usable endpoints?
 - which Node is running the backend?
 
 NorthScope turns that configured traffic model into a UI. The default view stays intentionally simple:
@@ -26,7 +26,7 @@ NorthScope turns that configured traffic model into a UI. The default view stays
 F5 / LB -> NodePort if present -> Controller -> Ingress -> Service -> Pod summary
 ```
 
-Expanded mode adds route, DNS/host, individual Pod, Node, and EndpointSlice context for deeper debugging.
+Expanded mode adds route, DNS/host, individual Pod, Node, EndpointSlice, and legacy Endpoint context for deeper debugging.
 
 ## Features
 
@@ -34,8 +34,8 @@ Expanded mode adds route, DNS/host, individual Pod, Node, and EndpointSlice cont
 - Namespace-aware Ingress route browser
 - Ingress object -> host -> path grouping
 - Simple and Expanded topology modes
-- Route diagnostics for missing Services, missing ports, selector mismatches, no Ready Pods, missing EndpointSlices, and unusable endpoints
-- EndpointSlice-aware backend checks, including selector-less Services
+- Route diagnostics for missing Services, missing ports, selector mismatches, no Ready Pods, missing EndpointSlice/Endpoints data, and unusable endpoints
+- EndpointSlice-aware backend checks, including selector-less Services and legacy Endpoints fallback
 - Optional Gateway API and F5 CIS discovery when those CRDs are installed
 - Real-time updates over WebSocket
 - Single Go binary with embedded React UI
@@ -106,7 +106,7 @@ Kubernetes API
   |-- client-go SharedInformers
   |   |-- Ingress / IngressClass
   |   |-- Service
-  |   |-- EndpointSlice
+  |   |-- EndpointSlice / Endpoints
   |   |-- Pod
   |   `-- Node
   `-- dynamic read-only discovery
@@ -142,7 +142,7 @@ Recommended validation scenarios:
 - one Ingress object with multiple hosts
 - the same host used by different Ingress objects
 - NodePort and LoadBalancer ingress controller Services
-- selector-less Services with manually managed EndpointSlices
+- selector-less Services with manually managed EndpointSlices or legacy Endpoints
 - missing backend Service, missing Service port, and zero Ready Pods
 
 ## Development

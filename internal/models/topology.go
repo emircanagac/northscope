@@ -15,6 +15,7 @@ const (
 	NodeKindNode          NodeKind = "Node"
 	NodeKindRoute         NodeKind = "Route"
 	NodeKindService       NodeKind = "Service"
+	NodeKindEndpoint      NodeKind = "Endpoint"
 	NodeKindEndpointSlice NodeKind = "EndpointSlice"
 	NodeKindPod           NodeKind = "Pod"
 )

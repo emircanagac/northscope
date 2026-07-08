@@ -39,6 +39,7 @@ type Watcher struct {
 	ingressInformer       networkinginformers.IngressInformer
 	ingressClassInformer  networkinginformers.IngressClassInformer
 	serviceInformer       coreinformers.ServiceInformer
+	endpointInformer      coreinformers.EndpointsInformer
 	endpointSliceInformer discoveryinformers.EndpointSliceInformer
 	podInformer           coreinformers.PodInformer
 
@@ -90,6 +91,7 @@ func NewWatcherFromClients(client kubernetes.Interface, dynamicClient dynamic.In
 		ingressInformer:       factory.Networking().V1().Ingresses(),
 		ingressClassInformer:  factory.Networking().V1().IngressClasses(),
 		serviceInformer:       factory.Core().V1().Services(),
+		endpointInformer:      factory.Core().V1().Endpoints(),
 		endpointSliceInformer: factory.Discovery().V1().EndpointSlices(),
 		podInformer:           factory.Core().V1().Pods(),
 		subscribers:           make(map[chan models.TopologySnapshot]struct{}),
@@ -110,6 +112,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.ingressInformer.Informer().HasSynced,
 		w.ingressClassInformer.Informer().HasSynced,
 		w.serviceInformer.Informer().HasSynced,
+		w.endpointInformer.Informer().HasSynced,
 		w.endpointSliceInformer.Informer().HasSynced,
 		w.podInformer.Informer().HasSynced,
 	); !ok {
@@ -179,6 +182,9 @@ func (w *Watcher) registerHandlers() error {
 		return err
 	}
 	if _, err := w.serviceInformer.Informer().AddEventHandler(handler); err != nil {
+		return err
+	}
+	if _, err := w.endpointInformer.Informer().AddEventHandler(handler); err != nil {
 		return err
 	}
 	if _, err := w.endpointSliceInformer.Informer().AddEventHandler(handler); err != nil {
@@ -258,6 +264,10 @@ func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
 	if err != nil {
 		return models.TopologySnapshot{}, err
 	}
+	endpoints, err := w.endpointInformer.Lister().List(labels.Everything())
+	if err != nil {
+		return models.TopologySnapshot{}, err
+	}
 	pods, err := w.podInformer.Lister().List(labels.Everything())
 	if err != nil {
 		return models.TopologySnapshot{}, err
@@ -265,7 +275,7 @@ func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
 	nodes := w.listNodes(context.Background())
 	externalResources := w.optionalExternalResources(context.Background())
 
-	return BuildTopologyWithResources(ingresses, ingressClasses, services, pods, nodes, externalResources, endpointSlices), nil
+	return BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices), nil
 }
 
 func (w *Watcher) optionalExternalResources(ctx context.Context) []ExternalResource {

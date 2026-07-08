@@ -357,6 +357,191 @@ func TestBuildTopologySelectorlessServiceUsesExternalEndpointSliceAddress(t *tes
 	assertEdge(t, snapshot, serviceID, endpointID, "endpointslice")
 }
 
+func TestBuildTopologySelectorlessServiceFallsBackToLegacyEndpoints(t *testing.T) {
+	snapshot := BuildTopologyWithResourcesAndEndpoints(
+		nil,
+		nil,
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{{Name: "http", Port: 80}},
+			},
+		}},
+		nil,
+		nil,
+		nil,
+		[]*corev1.Endpoints{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Subsets: []corev1.EndpointSubset{{
+				Addresses: []corev1.EndpointAddress{{IP: "192.0.2.80"}},
+			}},
+		}},
+		nil,
+	)
+
+	serviceID := nodeID(models.NodeKindService, "default", "legacy")
+	endpointID := legacyEndpointNodeID("default", "legacy", "192.0.2.80")
+	endpoint := findNode(t, snapshot, endpointID)
+	if endpoint.Data.Kind != models.NodeKindEndpoint {
+		t.Fatalf("expected endpoint node kind Endpoint, got %q", endpoint.Data.Kind)
+	}
+	if endpoint.Data.Properties["source"] != "Endpoints" {
+		t.Fatalf("expected endpoint source property, got %#v", endpoint.Data.Properties)
+	}
+	assertEdge(t, snapshot, serviceID, endpointID, "endpoint")
+}
+
+func TestBuildTopologyPrefersEndpointSliceStatsOverLegacyEndpoints(t *testing.T) {
+	className := "nginx"
+	ready := true
+	snapshot := BuildTopologyWithResourcesAndEndpoints(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					Host: "legacy.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Path:     "/",
+								PathType: pathTypePtr(networkingv1.PathTypePrefix),
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: "legacy",
+										Port: networkingv1.ServiceBackendPort{Name: "http"},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "k8s.io/ingress-nginx",
+			},
+		}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{{Name: "http", Port: 80}},
+			},
+		}},
+		nil,
+		nil,
+		nil,
+		[]*corev1.Endpoints{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Subsets: []corev1.EndpointSubset{{
+				Addresses: []corev1.EndpointAddress{{IP: "192.0.2.80"}},
+			}},
+		}},
+		[]*discoveryv1.EndpointSlice{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy-slice",
+				Labels: map[string]string{
+					discoveryv1.LabelServiceName: "legacy",
+				},
+			},
+			AddressType: discoveryv1.AddressTypeIPv4,
+			Endpoints: []discoveryv1.Endpoint{{
+				Addresses:  []string{"192.0.2.80"},
+				Conditions: discoveryv1.EndpointConditions{Ready: &ready},
+			}},
+		}},
+	)
+
+	route := findRouteNodeByBackend(t, snapshot, "legacy:http")
+	if route.Data.Properties["diagnosis"] != `Route resolves to Service "legacy" with 1 usable endpoint(s).` {
+		t.Fatalf("expected EndpointSlice stats to avoid double-counting legacy Endpoints, got %#v", route.Data.Properties)
+	}
+}
+
+func TestBuildTopologyExternalNameServiceTargetsExternalDNS(t *testing.T) {
+	className := "nginx"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					Host: "legacy.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Path:     "/",
+								PathType: pathTypePtr(networkingv1.PathTypePrefix),
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: "legacy",
+										Port: networkingv1.ServiceBackendPort{Name: "http"},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "k8s.io/ingress-nginx",
+			},
+		}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "legacy",
+			},
+			Spec: corev1.ServiceSpec{
+				Type:         corev1.ServiceTypeExternalName,
+				ExternalName: "legacy.internal.example.com",
+				Ports:        []corev1.ServicePort{{Name: "http", Port: 80}},
+			},
+		}},
+		nil,
+	)
+
+	route := findRouteNodeByBackend(t, snapshot, "legacy:http")
+	serviceID := nodeID(models.NodeKindService, "default", "legacy")
+	externalNameID := externalNameNodeID("default", "legacy")
+	endpoint := findNode(t, snapshot, externalNameID)
+	if endpoint.Data.Kind != models.NodeKindEndpoint {
+		t.Fatalf("expected external name node kind Endpoint, got %q", endpoint.Data.Kind)
+	}
+	if endpoint.Data.Properties["externalName"] != "legacy.internal.example.com" {
+		t.Fatalf("expected externalName property, got %#v", endpoint.Data.Properties)
+	}
+	if route.Data.Status != "Healthy" {
+		t.Fatalf("expected ExternalName route to be healthy, got %q", route.Data.Status)
+	}
+	assertEdge(t, snapshot, route.ID, serviceID, "routes")
+	assertEdge(t, snapshot, serviceID, externalNameID, "externalname")
+}
+
 func TestBuildTopologyLoadBalancerIngressControllerForwardsToController(t *testing.T) {
 	snapshot := BuildTopology(
 		nil,
@@ -457,6 +642,75 @@ func TestBuildTopologyLoadBalancerIngressControllerWithoutNodePortBalancesContro
 	loadBalancerID := loadBalancerNodeID("traefik", "traefik-ingress-controller")
 	assertNode(t, snapshot, loadBalancerID)
 	assertEdge(t, snapshot, loadBalancerID, controllerNodeID("traefik"), "balances")
+}
+
+func TestBuildTopologyDetectsCommonIngressControllerServices(t *testing.T) {
+	tests := []struct {
+		name          string
+		className     string
+		controller    string
+		serviceNS     string
+		serviceName   string
+		serviceLabels map[string]string
+	}{
+		{
+			name:        "nginx",
+			className:   "nginx",
+			controller:  "k8s.io/ingress-nginx",
+			serviceNS:   "ingress-nginx",
+			serviceName: "ingress-nginx-controller",
+		},
+		{
+			name:        "traefik",
+			className:   "traefik",
+			controller:  "traefik.io/ingress-controller",
+			serviceNS:   "traefik",
+			serviceName: "traefik",
+			serviceLabels: map[string]string{
+				"app.kubernetes.io/name": "traefik",
+			},
+		},
+		{
+			name:        "haproxy",
+			className:   "haproxy",
+			controller:  "haproxy.org/ingress-controller",
+			serviceNS:   "haproxy-controller",
+			serviceName: "haproxy-ingress-controller",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := BuildTopology(
+				nil,
+				[]*networkingv1.IngressClass{{
+					ObjectMeta: metav1.ObjectMeta{Name: tt.className},
+					Spec: networkingv1.IngressClassSpec{
+						Controller: tt.controller,
+					},
+				}},
+				[]*corev1.Service{{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: tt.serviceNS,
+						Name:      tt.serviceName,
+						Labels:    tt.serviceLabels,
+					},
+					Spec: corev1.ServiceSpec{
+						Type: corev1.ServiceTypeNodePort,
+						Ports: []corev1.ServicePort{{
+							Name:     "http",
+							Port:     80,
+							NodePort: 30080,
+						}},
+					},
+				}},
+				nil,
+			)
+
+			nodePortID := nodePortNodeID(tt.serviceNS, tt.serviceName, corev1.ServicePort{Name: "http", Port: 80})
+			assertEdge(t, snapshot, nodePortID, controllerNodeID(tt.className), "forwards")
+		})
+	}
 }
 
 func TestBuildTopologyDoesNotGuessIngressControllerWhenMultipleClassesExist(t *testing.T) {
@@ -676,6 +930,118 @@ func TestBuildTopologyDiagnosesMissingServicePortOnIngressRoute(t *testing.T) {
 		t.Fatalf("expected service kubectl command, got %#v", route.Data.Properties)
 	}
 	assertEdge(t, snapshot, route.ID, nodeID(models.NodeKindService, "default", "api"), "routes")
+}
+
+func TestBuildTopologyDiagnosesMissingServiceOnIngressRoute(t *testing.T) {
+	className := "nginx"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "api",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: "missing-api",
+										Port: networkingv1.ServiceBackendPort{Name: "http"},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "k8s.io/ingress-nginx",
+			},
+		}},
+		nil,
+		nil,
+	)
+
+	route := findRouteNodeByBackend(t, snapshot, "missing-api:http")
+	if route.Data.Status != "Error" {
+		t.Fatalf("expected route status Error, got %q", route.Data.Status)
+	}
+	if route.Data.Properties["diagnosis"] != `Backend Service "missing-api" does not exist in namespace "default".` {
+		t.Fatalf("expected missing service diagnosis, got %#v", route.Data.Properties)
+	}
+	assertNoEdge(t, snapshot, route.ID, nodeID(models.NodeKindService, "default", "missing-api"), "routes")
+}
+
+func TestBuildTopologyDiagnosesZeroReadyPodsOnIngressRoute(t *testing.T) {
+	className := "nginx"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "api",
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: "api",
+										Port: networkingv1.ServiceBackendPort{Name: "http"},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "k8s.io/ingress-nginx",
+			},
+		}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api"},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "api"},
+				Ports:    []corev1.ServicePort{{Name: "http", Port: 80}},
+			},
+		}},
+		[]*corev1.Pod{{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "api-0",
+				Labels:    map[string]string{"app": "api"},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionFalse,
+					Reason: "ContainersNotReady",
+				}},
+			},
+		}},
+	)
+
+	route := findRouteNodeByBackend(t, snapshot, "api:http")
+	if route.Data.Status != "Error" {
+		t.Fatalf("expected route status Error, got %q", route.Data.Status)
+	}
+	if route.Data.Properties["diagnosis"] != `Service "api" selects Pods, but none are Ready.` {
+		t.Fatalf("expected zero-ready Pod diagnosis, got %#v", route.Data.Properties)
+	}
+	assertEdge(t, snapshot, nodeID(models.NodeKindService, "default", "api"), nodeID(models.NodeKindPod, "default", "api-0"), "selects")
 }
 
 func TestBuildTopologyEndpointSliceTargetRefWinsOverAddressLookup(t *testing.T) {
