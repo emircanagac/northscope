@@ -162,6 +162,113 @@ func TestBuildTopologyIngressServicePod(t *testing.T) {
 	assertEdge(t, snapshot, nodeID(models.NodeKindService, "default", "web"), nodeID(models.NodeKindPod, "default", "web-abc"), "selects")
 }
 
+func TestBuildTopologySameHostAcrossIngressObjectsKeepsRoutesSeparate(t *testing.T) {
+	className := "nginx"
+	sharedHost := "shared.example.com"
+
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "blue",
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: &className,
+					Rules: []networkingv1.IngressRule{{
+						Host: sharedHost,
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{{
+									Path:     "/blue",
+									PathType: pathTypePtr(networkingv1.PathTypePrefix),
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "blue",
+											Port: networkingv1.ServiceBackendPort{Name: "http"},
+										},
+									},
+								}},
+							},
+						},
+					}},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "green",
+				},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: &className,
+					Rules: []networkingv1.IngressRule{{
+						Host: sharedHost,
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{{
+									Path:     "/green",
+									PathType: pathTypePtr(networkingv1.PathTypePrefix),
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "green",
+											Port: networkingv1.ServiceBackendPort{Name: "http"},
+										},
+									},
+								}},
+							},
+						},
+					}},
+				},
+			},
+		},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "k8s.io/ingress-nginx",
+			},
+		}},
+		[]*corev1.Service{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "blue",
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "blue"},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 80}},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "green",
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "green"},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 80}},
+				},
+			},
+		},
+		nil,
+	)
+
+	dnsID := nodeID(models.NodeKindDNS, "", sharedHost)
+	blueIngressID := nodeID(models.NodeKindIngress, "default", "blue")
+	greenIngressID := nodeID(models.NodeKindIngress, "default", "green")
+	blueRoute := findRouteNodeByBackend(t, snapshot, "blue:http")
+	greenRoute := findRouteNodeByBackend(t, snapshot, "green:http")
+
+	assertNode(t, snapshot, dnsID)
+	assertEdge(t, snapshot, dnsID, blueIngressID, "resolves")
+	assertEdge(t, snapshot, dnsID, greenIngressID, "resolves")
+	assertEdge(t, snapshot, blueIngressID, blueRoute.ID, "defines")
+	assertEdge(t, snapshot, greenIngressID, greenRoute.ID, "defines")
+	assertEdge(t, snapshot, blueRoute.ID, nodeID(models.NodeKindService, "default", "blue"), "routes")
+	assertEdge(t, snapshot, greenRoute.ID, nodeID(models.NodeKindService, "default", "green"), "routes")
+	assertNoEdge(t, snapshot, blueIngressID, greenRoute.ID, "defines")
+	assertNoEdge(t, snapshot, greenIngressID, blueRoute.ID, "defines")
+}
+
 func TestBuildTopologySelectorlessServiceUsesEndpointSlice(t *testing.T) {
 	snapshot := BuildTopology(
 		nil,
