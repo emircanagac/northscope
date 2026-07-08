@@ -130,7 +130,7 @@ NorthScope is intentionally observational. The default ClusterRole grants only:
 get, list, watch
 ```
 
-It does not create, patch, update, delete, exec into, or proxy through workloads. Because topology data can reveal internal hostnames, Services, Pods, Nodes, and IPs, run NorthScope behind trusted internal access controls.
+It does not read Secrets, ConfigMaps, Pod logs, or Events. It does not create, patch, update, delete, exec into, or proxy through workloads. Because topology data can reveal internal hostnames, Services, Pods, Nodes, and IPs, run NorthScope behind trusted internal access controls. See [SECURITY.md](SECURITY.md) for the exact RBAC surface and deployment guidance.
 
 ## Project Status
 

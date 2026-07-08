@@ -8,7 +8,6 @@ metadata:
 rules:
   - apiGroups: [""]
     resources:
-      - endpoints
       - namespaces
       - nodes
       - pods

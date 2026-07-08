@@ -6,6 +6,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
+- RBAC was tightened by removing unused core Endpoints permissions, and the security policy now documents the exact read-only permission surface.
 - Helm chart now supports an optional PodDisruptionBudget for multi-replica installations.
 - Helm chart now supports an optional NetworkPolicy for production installations.
 - Release workflow now publishes versioned container images and Helm charts from semver tags instead of a mutable `latest` image.
