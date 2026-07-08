@@ -58,7 +58,7 @@ NorthScope can display internal topology metadata, including:
 - EndpointSlice addresses, including external endpoint IPs for selector-less Services
 - Gateway API and F5 CIS object names and selected routing fields when those CRDs are present
 
-Run NorthScope behind trusted internal access controls. If exposed through Ingress, configure TLS and authentication at the ingress controller, identity proxy, or platform edge.
+Run NorthScope behind trusted internal access controls. If exposed through Ingress, configure TLS and authentication at the ingress controller, identity proxy, or platform edge. See [Production Access](docs/production-access.md) for examples.
 
 ## Deployment Hardening
 

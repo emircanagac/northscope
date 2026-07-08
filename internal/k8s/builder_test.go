@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"fmt"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -10,6 +11,90 @@ import (
 
 	"github.com/emircanagac/northscope/internal/models"
 )
+
+func TestBuildTopologyLargeClusterSmoke(t *testing.T) {
+	const ingressCount = 80
+	const pathsPerIngress = 3
+
+	className := "nginx"
+	pathType := networkingv1.PathTypePrefix
+
+	ingresses := make([]*networkingv1.Ingress, 0, ingressCount)
+	services := make([]*corev1.Service, 0, ingressCount*pathsPerIngress)
+	pods := make([]*corev1.Pod, 0, ingressCount*pathsPerIngress)
+
+	for ingressIndex := 0; ingressIndex < ingressCount; ingressIndex++ {
+		paths := make([]networkingv1.HTTPIngressPath, 0, pathsPerIngress)
+		for pathIndex := 0; pathIndex < pathsPerIngress; pathIndex++ {
+			serviceName := fmt.Sprintf("svc-%03d-%d", ingressIndex, pathIndex)
+			path := fmt.Sprintf("/app-%03d/%d", ingressIndex, pathIndex)
+			paths = append(paths, networkingv1.HTTPIngressPath{
+				Path:     path,
+				PathType: &pathType,
+				Backend: networkingv1.IngressBackend{
+					Service: &networkingv1.IngressServiceBackend{
+						Name: serviceName,
+						Port: networkingv1.ServiceBackendPort{Name: "http"},
+					},
+				},
+			})
+			services = append(services, &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "scale",
+					Name:      serviceName,
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": serviceName},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 80}},
+				},
+			})
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "scale",
+					Name:      serviceName + "-pod",
+					Labels:    map[string]string{"app": serviceName},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					PodIP: fmt.Sprintf("10.42.%d.%d", ingressIndex/250, ingressIndex%250+pathIndex+1),
+				},
+			})
+		}
+
+		ingresses = append(ingresses, &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "scale",
+				Name:      fmt.Sprintf("ingress-%03d", ingressIndex),
+			},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					Host: fmt.Sprintf("app-%03d.example.com", ingressIndex),
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{Paths: paths},
+					},
+				}},
+			},
+		})
+	}
+
+	snapshot := BuildTopology(
+		ingresses,
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec: networkingv1.IngressClassSpec{
+				Controller: "k8s.io/ingress-nginx",
+			},
+		}},
+		services,
+		pods,
+	)
+
+	assertKindCount(t, snapshot, models.NodeKindIngress, ingressCount)
+	assertKindCount(t, snapshot, models.NodeKindRoute, ingressCount*pathsPerIngress)
+	assertKindCount(t, snapshot, models.NodeKindService, ingressCount*pathsPerIngress)
+	assertKindCount(t, snapshot, models.NodeKindPod, ingressCount*pathsPerIngress)
+}
 
 func TestBuildTopologyIngressServicePod(t *testing.T) {
 	className := "nginx"
@@ -724,4 +809,17 @@ func hasEdge(snapshot models.TopologySnapshot, source, target, kind string) bool
 		}
 	}
 	return false
+}
+
+func assertKindCount(t *testing.T, snapshot models.TopologySnapshot, kind models.NodeKind, expected int) {
+	t.Helper()
+	actual := 0
+	for _, node := range snapshot.Nodes {
+		if node.Data.Kind == kind {
+			actual++
+		}
+	}
+	if actual != expected {
+		t.Fatalf("expected %d %s nodes, got %d", expected, kind, actual)
+	}
 }

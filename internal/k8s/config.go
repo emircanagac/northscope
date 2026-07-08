@@ -8,6 +8,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+const (
+	DefaultKubeClientQPS   float32 = 30
+	DefaultKubeClientBurst int     = 60
+)
+
 func BuildConfig(kubeconfig string) (*rest.Config, error) {
 	var cfg *rest.Config
 	var err error
@@ -42,9 +47,9 @@ func BuildConfig(kubeconfig string) (*rest.Config, error) {
 
 func tuneClientConfig(cfg *rest.Config) {
 	if cfg.QPS <= 0 {
-		cfg.QPS = 30
+		cfg.QPS = DefaultKubeClientQPS
 	}
 	if cfg.Burst <= 0 {
-		cfg.Burst = 60
+		cfg.Burst = DefaultKubeClientBurst
 	}
 }

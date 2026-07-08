@@ -6,6 +6,8 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
+- Added production access guidance for TLS, edge authentication, and NetworkPolicy usage.
+- Added reliability validation for Kubernetes client QPS/Burst defaults, watcher cancellation, snapshot build failures, and large topology builds.
 - RBAC was tightened by removing unused core Endpoints permissions, and the security policy now documents the exact read-only permission surface.
 - Helm chart now supports an optional PodDisruptionBudget for multi-replica installations.
 - Helm chart now supports an optional NetworkPolicy for production installations.

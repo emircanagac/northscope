@@ -73,7 +73,7 @@ Check rollout:
 kubectl -n northscope rollout status deploy/northscope
 ```
 
-The chart prints the access command after installation. By default, NorthScope is installed as a ClusterIP Service and can be opened with port-forwarding. To expose it through DNS, configure the chart's `ingress` values for your ingress controller and protect access with your platform's TLS and authentication controls.
+The chart prints the access command after installation. By default, NorthScope is installed as a ClusterIP Service and can be opened with port-forwarding. To expose it through DNS, configure the chart's `ingress` values for your ingress controller and protect access with your platform's TLS and authentication controls. See [Production Access](docs/production-access.md) for concise TLS, authentication, and NetworkPolicy examples.
 
 Production hardening options such as `networkPolicy`, `podDisruptionBudget`, resources, tolerations, and affinity are available as chart values. See `charts/northscope/values.yaml` for the full list.
 
@@ -130,7 +130,7 @@ NorthScope is intentionally observational. The default ClusterRole grants only:
 get, list, watch
 ```
 
-It does not read Secrets, ConfigMaps, Pod logs, or Events. It does not create, patch, update, delete, exec into, or proxy through workloads. Because topology data can reveal internal hostnames, Services, Pods, Nodes, and IPs, run NorthScope behind trusted internal access controls. See [SECURITY.md](SECURITY.md) for the exact RBAC surface and deployment guidance.
+It does not read Secrets, ConfigMaps, Pod logs, or Events. It does not create, patch, update, delete, exec into, or proxy through workloads. Because topology data can reveal internal hostnames, Services, Pods, Nodes, and IPs, run NorthScope behind trusted internal access controls. See [SECURITY.md](SECURITY.md) for the exact RBAC surface and [Production Access](docs/production-access.md) for TLS/auth guidance.
 
 ## Project Status
 

@@ -54,6 +54,8 @@ type Watcher struct {
 	optionalResourceLastRefresh          time.Time
 	optionalResourceGVRs                 map[schema.GroupVersionResource]struct{}
 	optionalResourceCache                []ExternalResource
+
+	buildSnapshotFunc func() (models.TopologySnapshot, error)
 }
 
 func NewWatcher(config *rest.Config) (*Watcher, error) {
@@ -197,7 +199,7 @@ func (w *Watcher) rebuildAndPublishWhenReady() {
 }
 
 func (w *Watcher) rebuildAndPublish() {
-	snapshot, err := w.buildSnapshot()
+	snapshot, err := w.nextSnapshot()
 	if err != nil {
 		log.Printf("build topology snapshot failed: %v", err)
 		return
@@ -230,6 +232,13 @@ func (w *Watcher) rebuildAndPublish() {
 			len(snapshot.Edges),
 		)
 	}
+}
+
+func (w *Watcher) nextSnapshot() (models.TopologySnapshot, error) {
+	if w.buildSnapshotFunc != nil {
+		return w.buildSnapshotFunc()
+	}
+	return w.buildSnapshot()
 }
 
 func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
