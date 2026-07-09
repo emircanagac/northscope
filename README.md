@@ -8,7 +8,7 @@
 
 NorthScope helps platform, SRE, DevOps, and application teams understand north-south traffic paths without changing the cluster. It watches Kubernetes API resources with read-only access, groups routes by Ingress object, and visualizes the path from external entry to controller, Ingress, Service, and backend Pods.
 
-![NorthScope simple topology view](docs/assets/northscope-simple-topology.gif)
+![NorthScope simple topology view](docs/assets/northscope-simple-topology.mp4)
 
 ## Overview
 
