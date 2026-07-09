@@ -2,6 +2,27 @@ apiVersion: v1
 entries:
   northscope:
   - apiVersion: v2
+    appVersion: 0.1.2
+    created: "2026-07-09T08:05:39.07090334Z"
+    description: Read-only Kubernetes Ingress traffic path debugger
+    digest: 8697028df94ee524a336495eb348357651f61e8c9503d1bdae8412ece1c1217f
+    home: https://github.com/emircanagac/northscope
+    keywords:
+    - kubernetes
+    - ingress
+    - topology
+    - debugging
+    - observability
+    maintainers:
+    - name: Emircan Agac
+    name: northscope
+    sources:
+    - https://github.com/emircanagac/northscope
+    type: application
+    urls:
+    - https://emircanagac.github.io/northscope/northscope-0.1.2.tgz
+    version: 0.1.2
+  - apiVersion: v2
     appVersion: latest
     created: "2026-07-07T08:05:20.274184796Z"
     description: Read-only Kubernetes Ingress traffic path debugger
@@ -43,4 +64,4 @@ entries:
     urls:
     - https://emircanagac.github.io/northscope/northscope-0.1.0.tgz
     version: 0.1.0
-generated: "2026-07-07T08:05:20.273644486Z"
+generated: "2026-07-09T08:05:39.070348323Z"
