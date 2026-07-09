@@ -6,6 +6,12 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.2 - 2026-07-09
+
+- Added troubleshooting documentation for readiness, RBAC, route diagnostics, endpoints, controller inference, optional CRDs, and metrics.
+- Added Prometheus-compatible `/metrics` endpoint for readiness, snapshot version, topology size, build counts, build errors, build duration, and websocket clients.
 - Added production access guidance for TLS, edge authentication, and NetworkPolicy usage.
 - Added reliability validation for Kubernetes client QPS/Burst defaults, watcher cancellation, snapshot build failures, and large topology builds.
 - Added topology regression coverage for the same host appearing in multiple Ingress objects.

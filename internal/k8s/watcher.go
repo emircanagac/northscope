@@ -49,6 +49,10 @@ type Watcher struct {
 	subscribers map[chan models.TopologySnapshot]struct{}
 	ready       uint32
 
+	snapshotBuildsTotal       uint64
+	snapshotBuildErrorsTotal  uint64
+	lastSnapshotBuildDuration time.Duration
+
 	nodeListWarningOnce                  sync.Once
 	optionalResourceDiscoveryWarningOnce sync.Once
 	optionalResourceMu                   sync.Mutex
@@ -57,6 +61,17 @@ type Watcher struct {
 	optionalResourceCache                []ExternalResource
 
 	buildSnapshotFunc func() (models.TopologySnapshot, error)
+}
+
+type WatcherMetrics struct {
+	Ready                            bool
+	SnapshotVersion                  int64
+	SnapshotNodes                    int
+	SnapshotEdges                    int
+	SnapshotBuildsTotal              uint64
+	SnapshotBuildErrorsTotal         uint64
+	LastSnapshotBuildDurationSeconds float64
+	WebsocketSubscribers             int
 }
 
 func NewWatcher(config *rest.Config) (*Watcher, error) {
@@ -148,6 +163,21 @@ func (w *Watcher) Ready() bool {
 	return atomic.LoadUint32(&w.ready) == 1 && !w.latest.GeneratedAt.IsZero()
 }
 
+func (w *Watcher) Metrics() WatcherMetrics {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return WatcherMetrics{
+		Ready:                            atomic.LoadUint32(&w.ready) == 1 && !w.latest.GeneratedAt.IsZero(),
+		SnapshotVersion:                  w.version,
+		SnapshotNodes:                    len(w.latest.Nodes),
+		SnapshotEdges:                    len(w.latest.Edges),
+		SnapshotBuildsTotal:              w.snapshotBuildsTotal,
+		SnapshotBuildErrorsTotal:         w.snapshotBuildErrorsTotal,
+		LastSnapshotBuildDurationSeconds: w.lastSnapshotBuildDuration.Seconds(),
+		WebsocketSubscribers:             len(w.subscribers),
+	}
+}
+
 func (w *Watcher) Subscribe(buffer int) (<-chan models.TopologySnapshot, func()) {
 	if buffer < 1 {
 		buffer = 1
@@ -205,14 +235,21 @@ func (w *Watcher) rebuildAndPublishWhenReady() {
 }
 
 func (w *Watcher) rebuildAndPublish() {
+	started := time.Now()
 	snapshot, err := w.nextSnapshot()
 	if err != nil {
+		w.mu.Lock()
+		w.snapshotBuildErrorsTotal++
+		w.lastSnapshotBuildDuration = time.Since(started)
+		w.mu.Unlock()
 		log.Printf("build topology snapshot failed: %v", err)
 		return
 	}
 
 	w.mu.Lock()
 	firstSnapshot := w.latest.GeneratedAt.IsZero()
+	w.snapshotBuildsTotal++
+	w.lastSnapshotBuildDuration = time.Since(started)
 	w.version++
 	snapshot.Version = w.version
 	w.latest = snapshot

@@ -1,7 +1,7 @@
 # NorthScope
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Go](https://img.shields.io/badge/go-1.22+-00ADD8.svg)
+![Go](https://img.shields.io/badge/go-1.26+-00ADD8.svg)
 ![Build Status](https://github.com/emircanagac/northscope/actions/workflows/ci.yml/badge.svg)
 
 **NorthScope is a lightweight, read-only Kubernetes Ingress topology debugger.**
@@ -38,6 +38,7 @@ Expanded mode adds route, DNS/host, individual Pod, Node, EndpointSlice, and leg
 - EndpointSlice-aware backend checks, including selector-less Services and legacy Endpoints fallback
 - Optional Gateway API and F5 CIS discovery when those CRDs are installed
 - Real-time updates over WebSocket
+- Prometheus-compatible `/metrics` endpoint for watcher health and snapshot build status
 - Single Go binary with embedded React UI
 - Single container image and Helm chart
 
@@ -76,6 +77,8 @@ kubectl -n northscope rollout status deploy/northscope
 The chart prints the access command after installation. By default, NorthScope is installed as a ClusterIP Service and can be opened with port-forwarding. To expose it through DNS, configure the chart's `ingress` values for your ingress controller and protect access with your platform's TLS and authentication controls. See [Production Access](docs/production-access.md) for concise TLS, authentication, and NetworkPolicy examples.
 
 Production hardening options such as `networkPolicy`, `podDisruptionBudget`, resources, tolerations, and affinity are available as chart values. See `charts/northscope/values.yaml` for the full list.
+
+For troubleshooting and operational metrics, see [Troubleshooting](docs/troubleshooting.md).
 
 Uninstall:
 
@@ -176,7 +179,7 @@ IMAGE=ghcr.io/emircanagac/northscope:dev make docker
 KUBECONFIG=/path/to/kubeconfig make run
 ```
 
-Release tags publish versioned artifacts. Before tagging a release, keep `charts/northscope/Chart.yaml`, `charts/northscope/values.yaml`, and `CHANGELOG.md` aligned, then push a semver tag such as `v0.1.1`. The release workflows publish `ghcr.io/emircanagac/northscope:0.1.1`, package the Helm chart, update the GitHub Pages chart repository, and create a GitHub release. NorthScope does not publish a mutable `latest` image tag.
+Release tags publish versioned artifacts. Before tagging a release, keep `charts/northscope/Chart.yaml`, `charts/northscope/values.yaml`, and `CHANGELOG.md` aligned, then push a semver tag such as `v0.1.2`. The release workflows publish `ghcr.io/emircanagac/northscope:0.1.2`, package the Helm chart, update the GitHub Pages chart repository, and create a GitHub release. NorthScope does not publish a mutable `latest` image tag.
 
 ## Community
 
@@ -184,6 +187,7 @@ Release tags publish versioned artifacts. Before tagging a release, keep `charts
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Maintainers](MAINTAINERS.md)
 - [Security Policy](SECURITY.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

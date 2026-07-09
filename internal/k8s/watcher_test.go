@@ -50,6 +50,23 @@ func TestWatcherKeepsLastSnapshotWhenBuildFails(t *testing.T) {
 	if len(after.Nodes) != 1 || after.Nodes[0].ID != "node-1" {
 		t.Fatalf("expected failed rebuild to keep last healthy snapshot, got %#v", after.Nodes)
 	}
+
+	metrics := watcher.Metrics()
+	if metrics.SnapshotBuildsTotal != 1 {
+		t.Fatalf("expected 1 successful build, got %d", metrics.SnapshotBuildsTotal)
+	}
+	if metrics.SnapshotBuildErrorsTotal != 1 {
+		t.Fatalf("expected 1 build error, got %d", metrics.SnapshotBuildErrorsTotal)
+	}
+	if metrics.SnapshotVersion != 1 {
+		t.Fatalf("expected snapshot version 1, got %d", metrics.SnapshotVersion)
+	}
+	if metrics.SnapshotNodes != 1 {
+		t.Fatalf("expected 1 snapshot node, got %d", metrics.SnapshotNodes)
+	}
+	if metrics.LastSnapshotBuildDurationSeconds < 0 {
+		t.Fatalf("expected non-negative build duration, got %f", metrics.LastSnapshotBuildDurationSeconds)
+	}
 }
 
 func TestWatcherSendsLatestSnapshotToReconnectedSubscriber(t *testing.T) {
