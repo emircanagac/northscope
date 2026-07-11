@@ -10,7 +10,7 @@
     "test:ui-smoke": "node --experimental-strip-types --test smoke/*.test.ts"
   },
   "dependencies": {
-    "@xyflow/react": "^12.3.6",
+    "@xyflow/react": "^12.11.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -22,6 +22,6 @@
     "postcss": "^8.5.16",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.5.4",
-    "vite": "^8.1.3"
+    "vite": "^8.1.4"
   }
 }
