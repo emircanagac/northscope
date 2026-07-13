@@ -60,7 +60,6 @@ jobs:
 
       - name: Add chart repository landing page
         run: |
-          release_version="${GITHUB_REF_NAME#v}"
           cat > .helm-repo/index.html <<EOF
           <!doctype html>
           <html lang="en">
@@ -96,7 +95,6 @@ jobs:
             <pre><code>helm repo add northscope https://emircanagac.github.io/northscope
           helm repo update
           helm upgrade --install northscope northscope/northscope \
-            --version ${release_version} \
             --namespace northscope \
             --create-namespace</code></pre>
             <p><a href="https://github.com/emircanagac/northscope">GitHub repository</a></p>
