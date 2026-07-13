@@ -8,6 +8,11 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 No unreleased changes.
 
+## 0.1.3 - 2026-07-13
+
+- Added dark mode for the main UI, route list, topology cards, graph canvas, and React Flow controls.
+- Improved topology viewport stability by avoiding graph remounts and repeated automatic fit-to-view during live updates.
+
 ## 0.1.2 - 2026-07-09
 
 - Added troubleshooting documentation for readiness, RBAC, route diagnostics, endpoints, controller inference, optional CRDs, and metrics.
