@@ -114,15 +114,15 @@ export function severityRank(severity: string): number {
 export function severityClass(severity: string): string {
   const normalized = severity.toLowerCase();
   if (normalized === 'error') {
-    return 'border-red-200 bg-red-50 text-red-800';
+    return 'border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/45 dark:text-red-100';
   }
   if (normalized === 'warning') {
-    return 'border-amber-200 bg-amber-50 text-amber-800';
+    return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/45 dark:text-amber-100';
   }
   if (normalized === 'ok') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+    return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-100';
   }
-  return 'border-slate-200 bg-slate-50 text-slate-700';
+  return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200';
 }
 
 export function routeGroupSeverity(group: RouteGroup): string {
@@ -149,7 +149,7 @@ export function routeGroupButtonClass(group: RouteGroup, selected: boolean): str
   return [
     'w-full rounded-md border px-3 py-2 text-left transition',
     severityClass(routeGroupSeverity(group)),
-    selected ? 'border-blue-300 shadow-sm ring-2 ring-blue-100' : '',
+    selected ? 'border-blue-300 shadow-sm ring-2 ring-blue-100 dark:border-blue-500 dark:ring-blue-900/60' : '',
   ].join(' ');
 }
 
