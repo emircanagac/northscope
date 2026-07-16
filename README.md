@@ -37,7 +37,9 @@ Expanded mode adds route, DNS/host, individual Pod, Node, EndpointSlice, and leg
 - Route diagnostics for missing Services, missing ports, selector mismatches, no Ready Pods, missing EndpointSlice/Endpoints data, and unusable endpoints
 - EndpointSlice-aware backend checks, including selector-less Services and legacy Endpoints fallback
 - Optional Gateway API and F5 CIS discovery when those CRDs are installed
-- Real-time updates over WebSocket
+- Coalesced Kubernetes event processing to avoid rebuild storms
+- Ingress-scoped WebSocket snapshots with cluster-wide inventory counts
+- Real-time updates over WebSocket, with unchanged snapshots suppressed
 - Prometheus-compatible `/metrics` endpoint for watcher health and snapshot build status
 - Single Go binary with embedded React UI
 - Single container image and Helm chart
@@ -116,7 +118,9 @@ Kubernetes API
       |-- Gateway API resources
       `-- F5 CIS resources
           |
-Topology Builder
+Debounced Topology Builder
+          |
+Ingress-scoped Snapshot + Cluster Inventory
           |
 Go HTTP + WebSocket Server
           |
@@ -166,6 +170,8 @@ Useful commands:
 
 ```bash
 make ui-build
+npm --prefix ui run test:ui-smoke
+npm --prefix ui run test:e2e
 make build
 make run
 make docker

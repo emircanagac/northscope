@@ -346,6 +346,8 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
 
   return (
     <div
+      data-testid="topology-node-card"
+      data-kind={data.kind}
       className={cx(
         'group relative flex flex-col justify-between overflow-hidden rounded-lg border shadow-lg transition duration-150',
         cardSize,

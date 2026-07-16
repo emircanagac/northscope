@@ -80,6 +80,8 @@ func TestMetricsEndpointExposesPrometheusText(t *testing.T) {
 		"northscope_ready 0",
 		"northscope_snapshot_builds_total 0",
 		"northscope_snapshot_build_errors_total 0",
+		"northscope_snapshot_publishes_total 0",
+		"northscope_snapshot_unchanged_total 0",
 		"northscope_websocket_clients 0",
 	} {
 		if !strings.Contains(string(body), metric) {

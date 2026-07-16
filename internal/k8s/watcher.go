@@ -8,9 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
@@ -27,13 +24,14 @@ import (
 )
 
 const defaultResyncPeriod = 10 * time.Minute
+const defaultRebuildDebounce = 250 * time.Millisecond
 const optionalResourceRefreshInterval = 2 * time.Minute
 
 type Watcher struct {
-	client        kubernetes.Interface
-	discovery     discovery.DiscoveryInterface
-	dynamicClient dynamic.Interface
-	resyncPeriod  time.Duration
+	discovery       discovery.DiscoveryInterface
+	dynamicClient   dynamic.Interface
+	resyncPeriod    time.Duration
+	rebuildDebounce time.Duration
 
 	factory               informers.SharedInformerFactory
 	ingressInformer       networkinginformers.IngressInformer
@@ -42,18 +40,21 @@ type Watcher struct {
 	endpointInformer      coreinformers.EndpointsInformer
 	endpointSliceInformer discoveryinformers.EndpointSliceInformer
 	podInformer           coreinformers.PodInformer
+	nodeInformer          coreinformers.NodeInformer
 
-	mu          sync.RWMutex
-	version     int64
-	latest      models.TopologySnapshot
-	subscribers map[chan models.TopologySnapshot]struct{}
-	ready       uint32
+	mu              sync.RWMutex
+	version         int64
+	latest          models.TopologySnapshot
+	subscribers     map[chan models.TopologySnapshot]struct{}
+	ready           uint32
+	rebuildRequests chan struct{}
 
 	snapshotBuildsTotal       uint64
 	snapshotBuildErrorsTotal  uint64
+	snapshotPublishesTotal    uint64
+	snapshotUnchangedTotal    uint64
 	lastSnapshotBuildDuration time.Duration
 
-	nodeListWarningOnce                  sync.Once
 	optionalResourceDiscoveryWarningOnce sync.Once
 	optionalResourceMu                   sync.Mutex
 	optionalResourceLastRefresh          time.Time
@@ -70,6 +71,8 @@ type WatcherMetrics struct {
 	SnapshotEdges                    int
 	SnapshotBuildsTotal              uint64
 	SnapshotBuildErrorsTotal         uint64
+	SnapshotPublishesTotal           uint64
+	SnapshotUnchangedTotal           uint64
 	LastSnapshotBuildDurationSeconds float64
 	WebsocketSubscribers             int
 }
@@ -98,10 +101,10 @@ func NewWatcherFromClients(client kubernetes.Interface, dynamicClient dynamic.In
 
 	factory := informers.NewSharedInformerFactory(client, resyncPeriod)
 	w := &Watcher{
-		client:                client,
 		discovery:             client.Discovery(),
 		dynamicClient:         dynamicClient,
 		resyncPeriod:          resyncPeriod,
+		rebuildDebounce:       defaultRebuildDebounce,
 		factory:               factory,
 		ingressInformer:       factory.Networking().V1().Ingresses(),
 		ingressClassInformer:  factory.Networking().V1().IngressClasses(),
@@ -109,7 +112,9 @@ func NewWatcherFromClients(client kubernetes.Interface, dynamicClient dynamic.In
 		endpointInformer:      factory.Core().V1().Endpoints(),
 		endpointSliceInformer: factory.Discovery().V1().EndpointSlices(),
 		podInformer:           factory.Core().V1().Pods(),
+		nodeInformer:          factory.Core().V1().Nodes(),
 		subscribers:           make(map[chan models.TopologySnapshot]struct{}),
+		rebuildRequests:       make(chan struct{}, 1),
 	}
 
 	if err := w.registerHandlers(); err != nil {
@@ -130,6 +135,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.endpointInformer.Informer().HasSynced,
 		w.endpointSliceInformer.Informer().HasSynced,
 		w.podInformer.Informer().HasSynced,
+		w.nodeInformer.Informer().HasSynced,
 	); !ok {
 		return fmt.Errorf("kubernetes informer cache sync failed")
 	}
@@ -138,14 +144,50 @@ func (w *Watcher) Run(ctx context.Context) error {
 	atomic.StoreUint32(&w.ready, 1)
 	w.rebuildAndPublish()
 
+	return w.runRebuildLoop(ctx)
+}
+
+func (w *Watcher) runRebuildLoop(ctx context.Context) error {
 	ticker := time.NewTicker(w.resyncPeriod)
 	defer ticker.Stop()
+
+	var debounceTimer *time.Timer
+	var debounceC <-chan time.Time
+	stopDebounce := func() {
+		if debounceTimer == nil {
+			return
+		}
+		if !debounceTimer.Stop() {
+			select {
+			case <-debounceTimer.C:
+			default:
+			}
+		}
+		debounceC = nil
+	}
+	defer stopDebounce()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			stopDebounce()
+			w.rebuildAndPublish()
+		case <-w.rebuildRequests:
+			if w.rebuildDebounce <= 0 {
+				w.rebuildAndPublish()
+				continue
+			}
+			if debounceTimer == nil {
+				debounceTimer = time.NewTimer(w.rebuildDebounce)
+			} else {
+				stopDebounce()
+				debounceTimer.Reset(w.rebuildDebounce)
+			}
+			debounceC = debounceTimer.C
+		case <-debounceC:
+			debounceC = nil
 			w.rebuildAndPublish()
 		}
 	}
@@ -173,6 +215,8 @@ func (w *Watcher) Metrics() WatcherMetrics {
 		SnapshotEdges:                    len(w.latest.Edges),
 		SnapshotBuildsTotal:              w.snapshotBuildsTotal,
 		SnapshotBuildErrorsTotal:         w.snapshotBuildErrorsTotal,
+		SnapshotPublishesTotal:           w.snapshotPublishesTotal,
+		SnapshotUnchangedTotal:           w.snapshotUnchangedTotal,
 		LastSnapshotBuildDurationSeconds: w.lastSnapshotBuildDuration.Seconds(),
 		WebsocketSubscribers:             len(w.subscribers),
 	}
@@ -223,6 +267,9 @@ func (w *Watcher) registerHandlers() error {
 	if _, err := w.podInformer.Informer().AddEventHandler(handler); err != nil {
 		return err
 	}
+	if _, err := w.nodeInformer.Informer().AddEventHandler(handler); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -231,7 +278,10 @@ func (w *Watcher) rebuildAndPublishWhenReady() {
 	if atomic.LoadUint32(&w.ready) == 0 {
 		return
 	}
-	w.rebuildAndPublish()
+	select {
+	case w.rebuildRequests <- struct{}{}:
+	default:
+	}
 }
 
 func (w *Watcher) rebuildAndPublish() {
@@ -250,9 +300,15 @@ func (w *Watcher) rebuildAndPublish() {
 	firstSnapshot := w.latest.GeneratedAt.IsZero()
 	w.snapshotBuildsTotal++
 	w.lastSnapshotBuildDuration = time.Since(started)
+	if !firstSnapshot && sameTopology(w.latest, snapshot) {
+		w.snapshotUnchangedTotal++
+		w.mu.Unlock()
+		return
+	}
 	w.version++
 	snapshot.Version = w.version
 	w.latest = snapshot
+	w.snapshotPublishesTotal++
 
 	for ch := range w.subscribers {
 		select {
@@ -309,10 +365,21 @@ func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
 	if err != nil {
 		return models.TopologySnapshot{}, err
 	}
-	nodes := w.listNodes(context.Background())
+	nodes, err := w.nodeInformer.Lister().List(labels.Everything())
+	if err != nil {
+		return models.TopologySnapshot{}, err
+	}
 	externalResources := w.optionalExternalResources(context.Background())
 
-	return BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices), nil
+	snapshot := BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices)
+	snapshot.Inventory = models.ClusterInventory{
+		Controllers: len(ingressClasses),
+		Ingresses:   len(ingresses),
+		Services:    len(services),
+		Pods:        len(pods),
+		Nodes:       len(nodes),
+	}
+	return ingressScopedSnapshot(snapshot), nil
 }
 
 func (w *Watcher) optionalExternalResources(ctx context.Context) []ExternalResource {
@@ -381,26 +448,6 @@ func (w *Watcher) availableOptionalResourceGVRs() (map[schema.GroupVersionResour
 		}
 	}
 	return available, nil
-}
-
-func (w *Watcher) listNodes(ctx context.Context) []*corev1.Node {
-	list, err := w.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
-			w.nodeListWarningOnce.Do(func() {
-				log.Printf("node topology disabled; list nodes failed: %v", err)
-			})
-			return nil
-		}
-		log.Printf("list nodes failed: %v", err)
-		return nil
-	}
-
-	nodes := make([]*corev1.Node, 0, len(list.Items))
-	for i := range list.Items {
-		nodes = append(nodes, &list.Items[i])
-	}
-	return nodes
 }
 
 func (w *Watcher) unsubscribe(ch chan models.TopologySnapshot) {

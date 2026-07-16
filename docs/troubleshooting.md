@@ -96,7 +96,11 @@ Useful metrics:
 - `northscope_snapshot_edges`
 - `northscope_snapshot_builds_total`
 - `northscope_snapshot_build_errors_total`
+- `northscope_snapshot_publishes_total`
+- `northscope_snapshot_unchanged_total`
 - `northscope_snapshot_build_duration_seconds`
 - `northscope_websocket_clients`
 
 If `northscope_snapshot_build_errors_total` increases, check NorthScope logs for `build topology snapshot failed`.
+
+`northscope_snapshot_unchanged_total` increases when informer resyncs or resource events produce the same Ingress-scoped topology. Those builds are intentionally not republished to WebSocket clients.

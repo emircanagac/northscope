@@ -14,8 +14,8 @@ Thanks for considering a contribution. NorthScope is pre-beta, so the most valua
 
 Requirements:
 
-- Go 1.22+
-- Node.js 22+
+- Go 1.26+
+- Node.js 26+
 - npm
 - Docker, optional
 - A Kubernetes cluster or kubeconfig, optional for local UI/backend testing
@@ -24,8 +24,16 @@ Build and test:
 
 ```bash
 make ui-build
+npm --prefix ui run test:ui-smoke
+npm --prefix ui run test:e2e
 go test ./...
 make build
+```
+
+Install the Playwright Chromium runtime once before running browser tests locally:
+
+```bash
+npm --prefix ui exec playwright install chromium
 ```
 
 Run locally with your kubeconfig:

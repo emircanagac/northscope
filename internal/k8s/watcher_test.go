@@ -149,3 +149,77 @@ func TestWatcherRunStopsOnContextCancel(t *testing.T) {
 		t.Fatal("watcher did not stop after context cancellation")
 	}
 }
+
+func TestWatcherCoalescesBurstEventsIntoSingleSnapshot(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	watcher.rebuildDebounce = 20 * time.Millisecond
+	atomic.StoreUint32(&watcher.ready, 1)
+	watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+		return models.TopologySnapshot{GeneratedAt: time.Now().UTC()}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- watcher.runRebuildLoop(ctx)
+	}()
+
+	for i := 0; i < 10; i++ {
+		watcher.rebuildAndPublishWhenReady()
+	}
+
+	deadline := time.After(time.Second)
+	for watcher.Metrics().SnapshotBuildsTotal < 1 {
+		select {
+		case err := <-errCh:
+			t.Fatalf("rebuild loop exited early: %v", err)
+		case <-deadline:
+			t.Fatal("coalesced snapshot was not built")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if builds := watcher.Metrics().SnapshotBuildsTotal; builds != 1 {
+		t.Fatalf("expected burst to produce 1 snapshot build, got %d", builds)
+	}
+}
+
+func TestWatcherSkipsPublishingUnchangedTopology(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	atomic.StoreUint32(&watcher.ready, 1)
+	watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+		return models.TopologySnapshot{
+			GeneratedAt: time.Now().UTC(),
+			Inventory:   models.ClusterInventory{Ingresses: 1},
+			Nodes:       []models.Node{{ID: "ingress-1"}},
+		}, nil
+	}
+
+	watcher.rebuildAndPublish()
+	watcher.rebuildAndPublish()
+
+	metrics := watcher.Metrics()
+	if metrics.SnapshotBuildsTotal != 2 {
+		t.Fatalf("expected 2 successful builds, got %d", metrics.SnapshotBuildsTotal)
+	}
+	if metrics.SnapshotPublishesTotal != 1 {
+		t.Fatalf("expected 1 published snapshot, got %d", metrics.SnapshotPublishesTotal)
+	}
+	if metrics.SnapshotUnchangedTotal != 1 {
+		t.Fatalf("expected 1 unchanged snapshot, got %d", metrics.SnapshotUnchangedTotal)
+	}
+	if metrics.SnapshotVersion != 1 {
+		t.Fatalf("expected unchanged topology to keep version 1, got %d", metrics.SnapshotVersion)
+	}
+}

@@ -59,9 +59,18 @@ type Edge struct {
 	Data     *EdgeData `json:"data,omitempty"`
 }
 
+type ClusterInventory struct {
+	Controllers int `json:"controllers"`
+	Ingresses   int `json:"ingresses"`
+	Services    int `json:"services"`
+	Pods        int `json:"pods"`
+	Nodes       int `json:"nodes"`
+}
+
 type TopologySnapshot struct {
-	Version     int64     `json:"version"`
-	GeneratedAt time.Time `json:"generatedAt"`
-	Nodes       []Node    `json:"nodes"`
-	Edges       []Edge    `json:"edges"`
+	Version     int64            `json:"version"`
+	GeneratedAt time.Time        `json:"generatedAt"`
+	Inventory   ClusterInventory `json:"inventory"`
+	Nodes       []Node           `json:"nodes"`
+	Edges       []Edge           `json:"edges"`
 }

@@ -9,6 +9,8 @@ dist/
 # UI
 ui/node_modules/
 ui/dist/
+ui/playwright-report/
+ui/test-results/
 ui/tsconfig.tsbuildinfo
 
 # Graphify local analysis outputs
