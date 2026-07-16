@@ -20,6 +20,24 @@ body {
   transition: none;
 }
 
+.northscope-edge-label {
+  position: absolute;
+  border-radius: 4px;
+  background: rgb(248 250 252 / 0.96);
+  padding: 4px 6px;
+  color: rgb(51 65 85);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.dark .northscope-edge-label {
+  background: rgb(15 23 42 / 0.96);
+  color: rgb(203 213 225);
+}
+
 .dark .react-flow__controls {
   overflow: hidden;
   border: 1px solid rgb(51 65 85);

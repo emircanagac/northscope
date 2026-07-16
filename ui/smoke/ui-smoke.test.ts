@@ -12,6 +12,8 @@ import {
   routeMatchesSearch,
 } from '../src/uiState.ts';
 import type { TopologyNode } from '../src/hooks/useTopologyStream.ts';
+import type { TopologyEdge } from '../src/hooks/useTopologyStream.ts';
+import { reconcileTopologyEdges, reconcileTopologyNodes } from '../src/flowState.ts';
 
 function route(overrides: Partial<RouteItem>): RouteItem {
   return {
@@ -127,4 +129,44 @@ test('simple and expanded topology modes share layout primitives and set view mo
   assert.equal(expanded[0].data.properties?.viewMode, 'expanded');
   assert.ok((simple.find((item) => item.id === 'service')?.position.x ?? 0) > (simple.find((item) => item.id === 'ingress')?.position.x ?? 0));
   assert.ok((expanded.find((item) => item.id === 'service')?.position.x ?? 0) > (expanded.find((item) => item.id === 'ingress')?.position.x ?? 0));
+});
+
+test('live snapshot reconciliation preserves measured nodes and unchanged edge references', () => {
+  const currentNode = {
+    ...node('pod', 'Pod', 'route:shop:/'),
+    position: { x: 1200, y: 240 },
+    measured: { width: 260, height: 144 },
+  };
+  const incomingNode = node('pod', 'Pod', 'route:shop:/');
+  const currentEdge: TopologyEdge = {
+    id: 'pod->node:runs_on',
+    source: 'pod',
+    target: 'node',
+    type: 'northscopeStep',
+    label: 'runs on',
+    data: { kind: 'runs_on' },
+  };
+  const incomingEdge: TopologyEdge = {
+    ...currentEdge,
+    data: { kind: 'runs_on' },
+  };
+
+  const stableNodes = reconcileTopologyNodes([currentNode], [incomingNode], false);
+  const stableEdges = reconcileTopologyEdges([currentEdge], [incomingEdge], false);
+
+  assert.equal(stableNodes[0], currentNode);
+  assert.equal(stableEdges[0], currentEdge);
+
+  const changedNode = {
+    ...incomingNode,
+    data: {
+      ...incomingNode.data,
+      status: 'NotReady',
+    },
+  };
+  const updatedNodes = reconcileTopologyNodes([currentNode], [changedNode], false);
+
+  assert.notEqual(updatedNodes[0], currentNode);
+  assert.deepEqual(updatedNodes[0].measured, currentNode.measured);
+  assert.deepEqual(updatedNodes[0].position, currentNode.position);
 });

@@ -11,6 +11,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { KubeNode } from './components/KubeNode';
+import { StableEdge } from './components/StableEdge';
+import { reconcileTopologyEdges, reconcileTopologyNodes } from './flowState';
 import {
   useTopologyStream,
   type TopologyEdge,
@@ -42,6 +44,10 @@ import {
 const nodeTypes = {
   northscopeNode: KubeNode,
 } satisfies NodeTypes;
+
+const edgeTypes = {
+  northscopeStep: StableEdge,
+};
 
 const THEME_STORAGE_KEY = 'northscope-theme';
 
@@ -83,6 +89,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => initialThemeMode());
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<TopologyNode, TopologyEdge> | null>(null);
   const lastFitViewSignature = useRef('');
+  const lastGraphStateSignature = useRef('');
   const [flowNodes, setNodes, onNodesChange] = useNodesState<TopologyNode>([]);
   const [flowEdges, setEdges, onEdgesChange] = useEdgesState<TopologyEdge>([]);
 
@@ -245,9 +252,11 @@ export default function App() {
   }, [isDarkMode, themeMode]);
 
   useEffect(() => {
-    setNodes(focusedGraphNodes);
-    setEdges(themedGraphEdges);
-  }, [focusedGraphNodes, setEdges, setNodes, themedGraphEdges]);
+    const resetGraph = lastGraphStateSignature.current !== fitViewSignature;
+    lastGraphStateSignature.current = fitViewSignature;
+    setNodes((current) => reconcileTopologyNodes(current, focusedGraphNodes, resetGraph));
+    setEdges((current) => reconcileTopologyEdges(current, themedGraphEdges, resetGraph));
+  }, [fitViewSignature, focusedGraphNodes, setEdges, setNodes, themedGraphEdges]);
 
   useEffect(() => {
     if (!selectedHostGroup) {
@@ -564,6 +573,7 @@ export default function App() {
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onInit={setFlowInstance}

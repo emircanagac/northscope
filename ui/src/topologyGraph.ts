@@ -77,7 +77,7 @@ function edgeLabel(kind: string): string {
 function normalizeEdge(edge: TopologyEdge): TopologyEdge {
   return {
     ...edge,
-    type: 'step',
+    type: 'northscopeStep',
     labelStyle: edgeLabelStyle,
     labelBgStyle: edgeLabelBgStyle,
     labelBgPadding: [6, 4],

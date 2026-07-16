@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { TopologyNode, NodeKind } from '../hooks/useTopologyStream';
 
@@ -332,7 +333,7 @@ function portSummary(data: TopologyNode['data']): string | null {
   return parts.join(' / ');
 }
 
-export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
+function KubeNodeComponent({ data, selected }: NodeProps<TopologyNode>) {
   const status = String(data.status ?? data.phase ?? 'Unknown');
   const hasError = isErrorStatus(status);
   const tone = kindTone(data.kind);
@@ -349,7 +350,7 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
       data-testid="topology-node-card"
       data-kind={data.kind}
       className={cx(
-        'group relative flex flex-col justify-between overflow-hidden rounded-lg border shadow-lg transition duration-150',
+        'group relative flex flex-col justify-between overflow-hidden rounded-lg border shadow-lg transition-colors duration-150',
         cardSize,
         selected && 'ring-2 ring-slate-900/20 dark:ring-slate-100/20',
         hasError ? 'border-red-500 bg-red-50 shadow-red-200 dark:border-red-500 dark:bg-red-950/55 dark:shadow-none' : tone.card,
@@ -419,3 +420,5 @@ export function KubeNode({ data, selected }: NodeProps<TopologyNode>) {
     </div>
   );
 }
+
+export const KubeNode = memo(KubeNodeComponent);

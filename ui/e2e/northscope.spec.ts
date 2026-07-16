@@ -148,12 +148,22 @@ async function installFakeTopologyStream(page: Page): Promise<void> {
       }
 
       send() {}
+
+      emit(payload: unknown) {
+        if (this.readyState !== FakeWebSocket.OPEN) {
+          return;
+        }
+        this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(payload) }));
+      }
     }
 
     window.__northscopeSocketControl = {
       instances: [] as FakeWebSocket[],
       closeLatest() {
         this.instances.at(-1)?.close();
+      },
+      send(payload: unknown) {
+        this.instances.at(-1)?.emit(payload);
       },
     };
     Object.assign(window, { WebSocket: FakeWebSocket });
@@ -165,6 +175,12 @@ declare global {
     __northscopeSocketControl: {
       instances: Array<{ close(): void }>;
       closeLatest(): void;
+      send(payload: unknown): void;
+    };
+    __northscopeEdgeLabelMonitor: {
+      active: boolean;
+      frames: number;
+      missingFrames: number;
     };
   }
 }
@@ -221,6 +237,97 @@ test('pan and zoom remain stable without viewport reset', async ({ page }) => {
   await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5, { steps: 6 });
   await page.mouse.up();
   await expect.poll(() => viewport.getAttribute('style')).not.toBe(zoomedTransform);
+});
+
+test('live pod updates keep expanded edge labels and viewport stable', async ({ page }) => {
+  await openSelectedTopology(page);
+  await page.getByRole('button', { name: 'Expanded' }).click();
+
+  const runsOnLabel = page.locator('.northscope-edge-label').filter({ hasText: 'runs on' }).first();
+  await expect(runsOnLabel).toBeVisible();
+  await page.waitForTimeout(250);
+
+  const viewport = page.locator('.react-flow__viewport');
+  const viewportTransform = await viewport.getAttribute('style');
+  const nodeTransforms = await page.locator('.react-flow__node').evaluateAll((items) =>
+    items.map((item) => ({
+      id: item.getAttribute('data-id'),
+      transform: (item as HTMLElement).style.transform,
+    })),
+  );
+
+  await page.evaluate(() => {
+    const label = Array.from(document.querySelectorAll<HTMLElement>('.northscope-edge-label')).find(
+      (item) => item.textContent?.trim() === 'runs on',
+    );
+    if (!label) {
+      throw new Error('runs on label was not found');
+    }
+
+    label.dataset.stabilityMarker = 'runs-on';
+    const monitor = {
+      active: true,
+      frames: 0,
+      missingFrames: 0,
+    };
+    window.__northscopeEdgeLabelMonitor = monitor;
+
+    const sample = () => {
+      if (!monitor.active) {
+        return;
+      }
+      monitor.frames += 1;
+      const current = document.querySelector<HTMLElement>('[data-stability-marker="runs-on"]');
+      if (!current || current.hidden || window.getComputedStyle(current).visibility === 'hidden') {
+        monitor.missingFrames += 1;
+      }
+      window.requestAnimationFrame(sample);
+    };
+    window.requestAnimationFrame(sample);
+  });
+
+  for (let version = 2; version <= 9; version += 1) {
+    const updatedSnapshot = {
+      ...snapshot,
+      version,
+      generatedAt: `2026-07-16T12:00:${String(version).padStart(2, '0')}Z`,
+      nodes: snapshot.nodes.map((item) =>
+        item.data.kind === 'Pod'
+          ? {
+              ...item,
+              data: {
+                ...item.data,
+                status: version % 2 === 0 ? 'Running' : 'ContainersNotReady',
+              },
+            }
+          : item,
+      ),
+    };
+    await page.evaluate((payload) => window.__northscopeSocketControl.send(payload), updatedSnapshot);
+    await page.waitForTimeout(80);
+  }
+
+  await page.waitForTimeout(250);
+  const monitor = await page.evaluate(() => {
+    const state = window.__northscopeEdgeLabelMonitor;
+    state.active = false;
+    return { frames: state.frames, missingFrames: state.missingFrames };
+  });
+
+  expect(monitor.frames).toBeGreaterThan(10);
+  expect(monitor.missingFrames).toBe(0);
+  await expect(page.locator('[data-stability-marker="runs-on"]')).toHaveCount(1);
+  await expect(viewport).toHaveAttribute('style', viewportTransform ?? '');
+  await expect
+    .poll(() =>
+      page.locator('.react-flow__node').evaluateAll((items) =>
+        items.map((item) => ({
+          id: item.getAttribute('data-id'),
+          transform: (item as HTMLElement).style.transform,
+        })),
+      ),
+    )
+    .toEqual(nodeTransforms);
 });
 
 test('simple and expanded cards share dimensions and contain their content', async ({ page }) => {

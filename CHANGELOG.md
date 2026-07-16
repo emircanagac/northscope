@@ -12,6 +12,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 - Suppressed WebSocket publication when a successful rebuild produces unchanged topology.
 - Split the backend topology builder and frontend graph construction into focused modules.
 - Added Chromium E2E coverage for dark mode persistence, WebSocket reconnects, pan/zoom stability, and card overflow.
+- Stabilized live topology updates by preserving measured React Flow state and rendering edge labels without SVG text remeasurement flicker.
 - Added Helm lint/render and browser E2E checks to pull request and main branch CI.
 
 ## 0.1.3 - 2026-07-13
