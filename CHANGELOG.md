@@ -6,6 +6,10 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.4 - 2026-07-16
+
 - Coalesced bursty Kubernetes informer events before rebuilding topology snapshots.
 - Moved Node discovery to the shared informer cache instead of listing Nodes for every snapshot.
 - Reduced WebSocket payloads to resources connected to supported traffic roots while preserving cluster-wide inventory counts.
