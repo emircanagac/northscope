@@ -30,6 +30,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Prepare embedded UI fixture
+        run: |
+          mkdir -p ui/dist
+          printf '<!doctype html><title>NorthScope test fixture</title>\n' > ui/dist/index.html
+
       - name: Test
         run: go test ./...
 
