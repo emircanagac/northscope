@@ -23,6 +23,12 @@ type Server struct {
 	upgrader   websocket.Upgrader
 }
 
+const (
+	websocketWriteWait  = 10 * time.Second
+	websocketPongWait   = 60 * time.Second
+	websocketPingPeriod = websocketPongWait * 9 / 10
+)
+
 func New(addr string, watcher *k8s.Watcher, staticFS fs.FS) *Server {
 	s := &Server{
 		watcher:  watcher,
@@ -137,15 +143,42 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	conn.SetReadLimit(1024)
+	_ = conn.SetReadDeadline(time.Now().Add(websocketPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(websocketPongWait))
+	})
+
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
 	updates, unsubscribe := s.watcher.Subscribe(8)
 	defer unsubscribe()
+	pingTicker := time.NewTicker(websocketPingPeriod)
+	defer pingTicker.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-readDone:
+			return
+		case <-pingTicker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(websocketWriteWait)); err != nil {
+				return
+			}
 		case snapshot, ok := <-updates:
 			if !ok {
+				return
+			}
+			if err := conn.SetWriteDeadline(time.Now().Add(websocketWriteWait)); err != nil {
 				return
 			}
 			if err := conn.WriteJSON(snapshot); err != nil {

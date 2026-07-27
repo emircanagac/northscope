@@ -9,6 +9,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/emircanagac/northscope/internal/k8s"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -87,5 +89,42 @@ func TestMetricsEndpointExposesPrometheusText(t *testing.T) {
 		if !strings.Contains(string(body), metric) {
 			t.Fatalf("expected metrics body to contain %q, got:\n%s", metric, string(body))
 		}
+	}
+}
+
+func TestWebSocketDisconnectRemovesSubscriberWithoutTopologyUpdate(t *testing.T) {
+	watcher, err := k8s.NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+	server := New(":0", watcher, fstest.MapFS{
+		"index.html": {Data: []byte("ok")},
+	})
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("connect websocket: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for watcher.Metrics().WebsocketSubscribers != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := watcher.Metrics().WebsocketSubscribers; got != 1 {
+		t.Fatalf("expected one websocket subscriber, got %d", got)
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close websocket: %v", err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for watcher.Metrics().WebsocketSubscribers != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := watcher.Metrics().WebsocketSubscribers; got != 0 {
+		t.Fatalf("expected disconnected subscriber to be removed, got %d", got)
 	}
 }

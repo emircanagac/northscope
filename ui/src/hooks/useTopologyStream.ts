@@ -65,6 +65,16 @@ export interface TopologyStreamState {
   error: string | null;
 }
 
+export function acceptNewerSnapshot(
+  current: TopologySnapshot | null,
+  incoming: TopologySnapshot,
+): TopologySnapshot {
+  if (current && incoming.version <= current.version) {
+    return current;
+  }
+  return incoming;
+}
+
 function resolveWebSocketURL(endpoint: string): string {
   if (endpoint.startsWith('ws://') || endpoint.startsWith('wss://')) {
     return endpoint;
@@ -97,7 +107,8 @@ export function useTopologyStream(endpoint = '/ws'): TopologyStreamState {
 
       socket.onmessage = (event) => {
         try {
-          setSnapshot(JSON.parse(event.data) as TopologySnapshot);
+          const incoming = JSON.parse(event.data) as TopologySnapshot;
+          setSnapshot((current) => acceptNewerSnapshot(current, incoming));
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Invalid topology payload');
         }

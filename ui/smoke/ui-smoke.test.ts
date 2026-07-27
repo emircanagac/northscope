@@ -11,8 +11,12 @@ import {
   resolveNamespaceEnterSelection,
   routeMatchesSearch,
 } from '../src/uiState.ts';
-import type { TopologyNode } from '../src/hooks/useTopologyStream.ts';
-import type { TopologyEdge } from '../src/hooks/useTopologyStream.ts';
+import {
+  acceptNewerSnapshot,
+  type TopologyEdge,
+  type TopologyNode,
+  type TopologySnapshot,
+} from '../src/hooks/useTopologyStream.ts';
 import { reconcileTopologyEdges, reconcileTopologyNodes } from '../src/flowState.ts';
 
 function route(overrides: Partial<RouteItem>): RouteItem {
@@ -169,4 +173,18 @@ test('live snapshot reconciliation preserves measured nodes and unchanged edge r
   assert.notEqual(updatedNodes[0], currentNode);
   assert.deepEqual(updatedNodes[0].measured, currentNode.measured);
   assert.deepEqual(updatedNodes[0].position, currentNode.position);
+});
+
+test('topology stream never replaces a newer snapshot with an older version', () => {
+  const snapshot = (version: number): TopologySnapshot => ({
+    version,
+    generatedAt: new Date(version * 1000).toISOString(),
+    nodes: [],
+    edges: [],
+  });
+
+  const current = snapshot(4);
+  assert.equal(acceptNewerSnapshot(current, snapshot(3)), current);
+  assert.equal(acceptNewerSnapshot(current, snapshot(4)), current);
+  assert.equal(acceptNewerSnapshot(current, snapshot(5)).version, 5);
 });

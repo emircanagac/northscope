@@ -231,14 +231,11 @@ func (w *Watcher) Subscribe(buffer int) (<-chan models.TopologySnapshot, func())
 
 	w.mu.Lock()
 	w.subscribers[ch] = struct{}{}
-	latest := w.latest
+	if !w.latest.GeneratedAt.IsZero() {
+		ch <- w.latest
+	}
 	w.mu.Unlock()
 
-	if latest.GeneratedAt.IsZero() {
-		return ch, func() { w.unsubscribe(ch) }
-	}
-
-	ch <- latest
 	return ch, func() { w.unsubscribe(ch) }
 }
 
