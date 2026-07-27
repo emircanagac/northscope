@@ -18,7 +18,7 @@ import {
   type TopologyEdge,
   type TopologyNode,
 } from './hooks/useTopologyStream';
-import { isIngressNode, summarizeKinds } from './topologyView';
+import { summarizeKinds } from './topologyView';
 import {
   filterEdgesForNodes,
   filterNodesByRoute,
@@ -100,7 +100,10 @@ export default function App() {
   );
   const namespaceOptions = useMemo<NamespaceOption[]>(() => {
     const ingressCounts = nodes.reduce((counts, node) => {
-      if (isIngressNode(node) && node.data.namespace) {
+      const kind = String(node.data.kind ?? '').toLowerCase();
+      const isF5 = kind === 'loadbalancer' && String(node.data.properties?.provider ?? '').toLowerCase() === 'f5';
+      if (['ingress', 'gateway'].includes(kind) || isF5) {
+        if (!node.data.namespace) return counts;
         counts.set(node.data.namespace, (counts.get(node.data.namespace) ?? 0) + 1);
       }
       return counts;
@@ -134,10 +137,17 @@ export default function App() {
   const filteredRoutes = useMemo(() => routes.filter((route) => routeMatchesSearch(route, routeSearch)), [routeSearch, routes]);
   const routeGroups = useMemo(() => groupRoutes(filteredRoutes), [filteredRoutes]);
   const routeHostGroups = useMemo(() => groupRoutesByHost(filteredRoutes), [filteredRoutes]);
-  const routeIngressCount = useMemo(() => new Set(routes.map((route) => route.ingressId)).size, [routes]);
+  const routeRootCount = useMemo(() => new Set(routes.map((route) => route.ingressId)).size, [routes]);
   const routeHostCount = useMemo(() => new Set(routes.map((route) => route.host)).size, [routes]);
+  const routePathCount = useMemo(
+    () => new Set(routes.map((route) => `${route.ingressId}:${route.host}:${route.path}`)).size,
+    [routes],
+  );
   const selectedHostGroup = routeHostGroups.find((group) => group.id === selectedHostGroupId);
-  const selectedRouteIds = useMemo(() => selectedHostGroup?.routes.map((route) => route.id) ?? [], [selectedHostGroup]);
+  const selectedRouteIds = useMemo(
+    () => Array.from(new Set(selectedHostGroup?.routes.map((route) => route.topologyId) ?? [])),
+    [selectedHostGroup],
+  );
   const selectedLaneIds = useMemo(
     () => Array.from(new Set(selectedHostGroup?.routes.map((route) => route.hostLaneId) ?? [])),
     [selectedHostGroup],
@@ -202,7 +212,7 @@ export default function App() {
       return 'Select a host route to draw topology';
     }
     if (hasTopology) {
-      return namespace ? 'No Ingress routes found in this namespace' : 'No Ingress routes found';
+      return namespace ? 'No traffic routes found in this namespace' : 'No traffic routes found';
     }
     return 'Snapshot received, but no supported topology objects were found';
   }, [filteredRoutes.length, graphReady, hasSnapshot, hasTopology, namespace, selectedHostGroup, status]);
@@ -216,8 +226,8 @@ export default function App() {
     }
     if (hasTopology) {
       return namespace
-        ? 'NorthScope needs Ingress objects with HTTP rules or default backends in the selected namespace.'
-        : 'Search by host, ingress, service, path, or namespace to find a traffic route.';
+        ? 'NorthScope needs an Ingress, Gateway API route, or supported F5 resource in the selected namespace.'
+        : 'Search by host, resource, service, path, or namespace to find a traffic route.';
     }
     return 'The cluster may be empty for watched resources, or NorthScope may not have permission to list them.';
   }, [filteredRoutes.length, graphReady, hasSnapshot, hasTopology, namespace, selectedHostGroup]);
@@ -431,7 +441,7 @@ export default function App() {
                       >
                         <span className="min-w-0 truncate">{option.name}</span>
                         <span className={`shrink-0 text-[10px] font-black uppercase ${option.ingressCount > 0 ? 'text-blue-600 dark:text-blue-300' : 'text-slate-400 dark:text-slate-500'}`}>
-                          {option.ingressCount} ing
+                          {option.ingressCount} roots
                         </span>
                       </button>
                     ))
@@ -445,12 +455,12 @@ export default function App() {
 
           <section className="flex min-h-0 flex-1 flex-col">
             <div className="shrink-0 px-4 py-3">
-              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Ingress routes</div>
+              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Traffic routes</div>
               <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {routeIngressCount} Ingress Object{routeIngressCount === 1 ? '' : 's'}
+                {routeRootCount} traffic root{routeRootCount === 1 ? '' : 's'}
               </div>
               <div className="mt-0.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                {routeHostCount} host{routeHostCount === 1 ? '' : 's'} / {routes.length} path{routes.length === 1 ? '' : 's'}
+                {routeHostCount} host{routeHostCount === 1 ? '' : 's'} / {routePathCount} path{routePathCount === 1 ? '' : 's'}
               </div>
               <div className="relative mt-3">
                 <input
@@ -461,7 +471,7 @@ export default function App() {
                       setRouteSearch('');
                     }
                   }}
-                  placeholder="Search ingress, host, path, service"
+                  placeholder="Search resource, host, path, service"
                   className="h-8 w-full rounded-md border border-slate-200 bg-slate-50 px-3 pr-16 text-xs font-semibold outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-500 dark:focus:bg-slate-900 dark:focus:ring-blue-950"
                 />
                 {routeSearch ? (
@@ -496,8 +506,9 @@ export default function App() {
                         <div className="min-w-0">
                           <div className="break-words text-sm font-black leading-snug">{namespace ? group.ingress : `${group.namespace} / ${group.ingress}`}</div>
                           <div className="mt-0.5 text-[11px] font-semibold opacity-75">
-                            {routesByHost.length} host{routesByHost.length === 1 ? '' : 's'} / {group.routes.length} path
-                            {group.routes.length === 1 ? '' : 's'}
+                            {group.rootKind} · {routesByHost.length} host{routesByHost.length === 1 ? '' : 's'} /{' '}
+                            {new Set(group.routes.map((route) => `${route.host}:${route.path}`)).size} path
+                            {new Set(group.routes.map((route) => `${route.host}:${route.path}`)).size === 1 ? '' : 's'}
                           </div>
                         </div>
                         <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-950/70 dark:text-slate-200">
@@ -525,7 +536,9 @@ export default function App() {
                                 <div className="min-w-0 break-words text-xs font-black leading-snug">{host}</div>
                                 <div className="flex shrink-0 items-center gap-1">
                                   {hostRoutes.length > 1 ? (
-                                    <span className="text-[10px] font-black uppercase text-slate-500 dark:text-slate-400">{hostRoutes.length} paths</span>
+                                    <span className="text-[10px] font-black uppercase text-slate-500 dark:text-slate-400">
+                                      {new Set(hostRoutes.map((route) => route.path)).size} paths
+                                    </span>
                                   ) : null}
                                   <span
                                     className={`rounded-full px-1.5 py-0.5 text-[9px] font-black uppercase ${
@@ -559,8 +572,8 @@ export default function App() {
                   {routeSearch
                     ? 'No routes match this search'
                     : namespace
-                      ? 'No Ingress routes in this namespace'
-                      : 'No Ingress routes found'}
+                      ? 'No traffic routes in this namespace'
+                      : 'No traffic routes found'}
                 </div>
               )}
             </div>

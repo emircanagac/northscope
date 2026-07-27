@@ -4,7 +4,9 @@ export type TopologyMode = 'simple' | 'expanded';
 
 export interface RouteItem {
   id: string;
+  topologyId: string;
   ingressId: string;
+  rootKind: string;
   serviceId: string;
   namespace: string;
   name: string;
@@ -21,6 +23,7 @@ export interface RouteGroup {
   id: string;
   namespace: string;
   ingress: string;
+  rootKind: string;
   routes: RouteItem[];
 }
 
@@ -38,7 +41,7 @@ function kindOf(node?: TopologyNode): string {
 
 function nodeColumn(node: TopologyNode): string {
   const kind = kindOf(node);
-  if (kind === 'f5' || kind === 'externaledge') return 'f5';
+  if (kind === 'f5' || kind === 'externaledge' || kind === 'loadbalancer') return 'f5';
   if (kind === 'podgroup') return 'pod';
   if (kind === 'endpoint') return 'endpoint';
   if (kind === 'endpointslice') return 'endpoint';
@@ -56,8 +59,8 @@ function nodeDisplayNameForLayout(node: TopologyNode): string {
 export function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): TopologyNode[] {
   const columnOrder =
     mode === 'simple'
-      ? ['f5', 'nodeport', 'controller', 'ingress', 'service', 'endpoint', 'pod']
-      : ['f5', 'nodeport', 'controller', 'ingress', 'dns', 'route', 'service', 'endpoint', 'pod', 'node'];
+      ? ['f5', 'nodeport', 'controller', 'ingress', 'gateway', 'route', 'service', 'endpoint', 'pod']
+      : ['f5', 'nodeport', 'controller', 'ingress', 'gateway', 'dns', 'route', 'service', 'endpoint', 'pod', 'node'];
   const columnGap = 340;
   const rowGap = mode === 'simple' ? 190 : 240;
   const columns = new Map<string, TopologyNode[]>();
@@ -166,6 +169,7 @@ export function groupRoutes(routes: RouteItem[]): RouteGroup[] {
       id,
       namespace: group[0].namespace,
       ingress: group[0].ingress,
+      rootKind: group[0].rootKind,
       routes: [...group].sort((left, right) => {
         const severity = severityRank(left.severity) - severityRank(right.severity);
         if (severity !== 0) return severity;

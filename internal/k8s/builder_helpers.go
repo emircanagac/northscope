@@ -270,6 +270,12 @@ func externalProperties(resource ExternalResource, provider string) map[string]s
 	if len(resource.Addresses) > 0 {
 		properties["addresses"] = strings.Join(resource.Addresses, ", ")
 	}
+	if len(resource.Hostnames) > 0 {
+		properties["hostnames"] = strings.Join(resource.Hostnames, ", ")
+	}
+	if len(resource.Paths) > 0 {
+		properties["paths"] = strings.Join(resource.Paths, ", ")
+	}
 	return properties
 }
 

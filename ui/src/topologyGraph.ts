@@ -38,6 +38,15 @@ interface HostRouteRecord {
   hostLaneId: string;
 }
 
+interface ExternalRouteRecord {
+  route: TopologyNode;
+  service?: TopologyNode;
+  displayService: TopologyNode;
+  host: string;
+  path: string;
+  hostLaneId: string;
+}
+
 function kindOf(node?: TopologyNode): string {
   return String(node?.data.kind ?? '').toLowerCase();
 }
@@ -54,6 +63,12 @@ function edgeLabel(kind: string): string {
       return 'forwards';
     case 'controls':
       return 'watches';
+    case 'attaches':
+      return 'attaches';
+    case 'rejected':
+      return 'rejected';
+    case 'balances':
+      return 'balances';
     case 'defines':
       return 'matches';
     case 'routes':
@@ -162,13 +177,31 @@ function ingressRouteLabel(ingress: TopologyNode): string {
   return String(ingress.data.name || ingress.data.label || nodeDisplayName(ingress));
 }
 
+function propertyValues(value?: string): string[] {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function routeSeverity(node: TopologyNode): string {
+  const explicit = String(node.data.properties?.severity ?? '').toLowerCase();
+  if (explicit) return explicit;
+  const status = String(node.data.status ?? '').toLowerCase();
+  if (status.includes('false') || status.includes('error') || status.includes('rejected')) return 'error';
+  if (status.includes('pending') || status.includes('unknown')) return 'warning';
+  return 'ok';
+}
+
 function routeItemFromNode(route: TopologyNode, ingress: TopologyNode, hostLaneId: string, service?: TopologyNode): RouteItem {
   const props = route.data.properties ?? {};
   const host = routeHost(route);
   const path = routePath(route);
   return {
     id: route.id,
+    topologyId: route.id,
     ingressId: ingress.id,
+    rootKind: 'Ingress',
     serviceId: service?.id ?? '',
     namespace: String(ingress.data.namespace ?? route.data.namespace ?? ''),
     name: String(route.data.label ?? route.data.name),
@@ -304,9 +337,9 @@ function nodePortRole(node?: TopologyNode): string {
   return 'other';
 }
 
-function pickControllerNodePorts(controllerId: string, nodesById: Map<string, TopologyNode>, edges: TopologyEdge[]): TopologyNode[] {
-  const candidates = edges
-    .filter((edge) => edge.target === controllerId && edgeKind(edge) === 'forwards')
+function pickControllerNodePorts(nodesById: Map<string, TopologyNode>, incomingEdges: TopologyEdge[]): TopologyNode[] {
+  const candidates = incomingEdges
+    .filter((edge) => edgeKind(edge) === 'forwards')
     .map((edge) => nodesById.get(edge.source))
     .filter((node): node is TopologyNode => kindOf(node) === 'nodeport')
     .sort((left, right) => nodeDisplayName(left).localeCompare(nodeDisplayName(right)));
@@ -338,9 +371,26 @@ export function buildNamespaceTrafficGraph(
   mode: TopologyMode,
 ): NamespaceTrafficGraph {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const outgoingBySource = new Map<string, TopologyEdge[]>();
+  const incomingByTarget = new Map<string, TopologyEdge[]>();
+  for (const edge of edges) {
+    outgoingBySource.set(edge.source, [...(outgoingBySource.get(edge.source) ?? []), edge]);
+    incomingByTarget.set(edge.target, [...(incomingByTarget.get(edge.target) ?? []), edge]);
+  }
+  const outgoingEdges = (nodeId: string, kinds?: string[]): TopologyEdge[] =>
+    (outgoingBySource.get(nodeId) ?? []).filter((edge) => !kinds || kinds.includes(edgeKind(edge)));
+  const incomingEdges = (nodeId: string, kinds?: string[]): TopologyEdge[] =>
+    (incomingByTarget.get(nodeId) ?? []).filter((edge) => !kinds || kinds.includes(edgeKind(edge)));
   const namespaceMatches = (value?: string) => !namespace || value === namespace;
   const ingressNodes = nodes.filter((node) => isIngressNode(node) && namespaceMatches(node.data.namespace));
-  if (ingressNodes.length === 0) {
+  const gatewayNodes = nodes.filter((node) => kindOf(node) === 'gateway' && namespaceMatches(node.data.namespace));
+  const f5Nodes = nodes.filter(
+    (node) =>
+      kindOf(node) === 'loadbalancer' &&
+      String(node.data.properties?.provider ?? '').toLowerCase() === 'f5' &&
+      namespaceMatches(node.data.namespace),
+  );
+  if (ingressNodes.length === 0 && gatewayNodes.length === 0 && f5Nodes.length === 0) {
     return { nodes: [], edges: [], routes: [] };
   }
 
@@ -357,8 +407,7 @@ export function buildNamespaceTrafficGraph(
     graphEdges.set(edge.id, displayEdge(edge));
   };
   const podsForService = (service: TopologyNode): TopologyNode[] =>
-    edges
-      .filter((edge) => edge.source === service.id && ['selects', 'endpointslice', 'endpoint', 'externalname'].includes(edgeKind(edge)))
+    outgoingEdges(service.id, ['selects', 'endpointslice', 'endpoint', 'externalname'])
       .map((edge) => nodeById.get(edge.target))
       .filter((node): node is TopologyNode => {
         if (!node) {
@@ -367,16 +416,74 @@ export function buildNamespaceTrafficGraph(
         return kindOf(node) === 'pod' && node.data.namespace === service.data.namespace;
       });
   const externalEndpointsForService = (service: TopologyNode): TopologyNode[] =>
-    edges
-      .filter((edge) => edge.source === service.id && ['endpointslice', 'endpoint', 'externalname'].includes(edgeKind(edge)))
+    outgoingEdges(service.id, ['endpointslice', 'endpoint', 'externalname'])
       .map((edge) => nodeById.get(edge.target))
       .filter((node): node is TopologyNode => ['endpointslice', 'endpoint'].includes(kindOf(node)) && node?.data.namespace === service.data.namespace);
+  const addServiceBranch = (
+    source: TopologyNode,
+    service: TopologyNode,
+    laneId: string,
+    summarySource: TopologyNode,
+    relationKind = 'routes',
+  ) => {
+    const laneService = laneNode(service, laneId);
+    addNode(laneService);
+    addEdge(laneEdge(source, laneService, relationKind));
+
+    const backendEdges = outgoingEdges(service.id, ['selects', 'endpointslice', 'endpoint', 'externalname']);
+    if (mode === 'expanded') {
+      for (const backendEdge of backendEdges) {
+        const backend = nodeById.get(backendEdge.target);
+        if (!backend || backend.data.namespace !== service.data.namespace) {
+          continue;
+        }
+        const backendKind = kindOf(backend);
+        if (!['pod', 'endpoint', 'endpointslice'].includes(backendKind)) {
+          continue;
+        }
+        const laneBackend = laneNode(backend, laneId);
+        addNode(laneBackend);
+        addEdge(laneEdge(laneService, laneBackend, edgeKind(backendEdge)));
+
+        if (backendKind !== 'pod') {
+          continue;
+        }
+        for (const hostEdge of incomingEdges(backend.id, ['hosts'])) {
+          const kubeNode = nodeById.get(hostEdge.source);
+          if (!kubeNode || kindOf(kubeNode) !== 'node') {
+            continue;
+          }
+          const laneKubeNode = laneNode(kubeNode, laneId);
+          addNode(laneKubeNode);
+          addEdge(laneEdge(laneBackend, laneKubeNode, 'runs_on'));
+        }
+      }
+      return;
+    }
+
+    const externalEndpoints = externalEndpointsForService(service);
+    if (externalEndpoints.length > 0) {
+      for (const endpoint of externalEndpoints) {
+        const laneEndpoint = laneNode(endpoint, laneId);
+        addNode(laneEndpoint);
+        addEdge(laneEdge(laneService, laneEndpoint, 'endpoint'));
+      }
+      return;
+    }
+
+    const lanePodSummary = laneNode(
+      syntheticPodSummaryNode(String(service.data.namespace ?? ''), summarySource, podsForService(service)),
+      laneId,
+    );
+    addNode(lanePodSummary);
+    addEdge(laneEdge(laneService, lanePodSummary, 'selects'));
+  };
 
   for (const ingress of ingressNodes) {
     const ingressNamespace = String(ingress.data.namespace ?? '');
-    const controllerEdges = edges.filter((edge) => edge.target === ingress.id && edgeKind(edge) === 'controls');
+    const controllerEdges = incomingEdges(ingress.id, ['controls']);
 
-    const routeEdges = edges.filter((edge) => edge.source === ingress.id && edgeKind(edge) === 'defines');
+    const routeEdges = outgoingEdges(ingress.id, ['defines']);
     const routeRecords: HostRouteRecord[] = [];
     for (const routeEdge of routeEdges) {
       const route = nodeById.get(routeEdge.target);
@@ -384,7 +491,7 @@ export function buildNamespaceTrafficGraph(
         continue;
       }
 
-      const serviceEdge = edges.find((edge) => edge.source === route.id && edgeKind(edge) === 'routes');
+      const serviceEdge = outgoingEdges(route.id, ['routes'])[0];
       const service = serviceEdge ? nodeById.get(serviceEdge.target) : undefined;
       const displayService = service ?? syntheticMissingServiceNode(ingressNamespace, route);
       const host = routeHost(route);
@@ -414,7 +521,7 @@ export function buildNamespaceTrafficGraph(
       for (const controller of controllersForLane) {
         const laneController = laneNode(controller, routeHostLaneId);
         addNode(laneController);
-        const nodePorts = pickControllerNodePorts(controller.id, nodeById, edges);
+        const nodePorts = pickControllerNodePorts(nodeById, incomingEdges(controller.id, ['forwards']));
         if (nodePorts.length > 0) {
           for (const nodePort of nodePorts) {
             const laneNodePort = laneNode(nodePort, routeHostLaneId);
@@ -442,9 +549,7 @@ export function buildNamespaceTrafficGraph(
           addEdge(laneEdge(laneHost, laneRoute, 'defines'));
           addEdge(laneEdge(laneRoute, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
 
-          const podEdges = edges.filter(
-            (edge) => edge.source === record.displayService.id && ['selects', 'endpointslice', 'endpoint', 'externalname'].includes(edgeKind(edge)),
-          );
+          const podEdges = outgoingEdges(record.displayService.id, ['selects', 'endpointslice', 'endpoint', 'externalname']);
           for (const podEdge of podEdges) {
             const backend = nodeById.get(podEdge.target);
             if (!backend || backend.data.namespace !== record.displayService.data.namespace) {
@@ -463,7 +568,7 @@ export function buildNamespaceTrafficGraph(
             addNode(lanePod);
             addEdge(laneEdge(laneService, lanePod, edgeKind(podEdge)));
 
-            const nodeHostEdges = edges.filter((edge) => edge.target === backend.id && edgeKind(edge) === 'hosts');
+            const nodeHostEdges = incomingEdges(backend.id, ['hosts']);
             for (const nodeHostEdge of nodeHostEdges) {
               const node = nodeById.get(nodeHostEdge.source);
               if (!node || kindOf(node) !== 'node') {
@@ -503,7 +608,7 @@ export function buildNamespaceTrafficGraph(
     }
 
     if (routeEdges.length === 0) {
-      const serviceEdges = edges.filter((edge) => edge.source === ingress.id && edgeKind(edge) === 'routes');
+      const serviceEdges = outgoingEdges(ingress.id, ['routes']);
       for (const serviceEdge of serviceEdges) {
         const service = nodeById.get(serviceEdge.target);
         if (kindOf(service) !== 'service' || service?.data.namespace !== ingressNamespace) {
@@ -511,6 +616,134 @@ export function buildNamespaceTrafficGraph(
         }
         addNode(service);
         addEdge(serviceEdge);
+      }
+    }
+  }
+
+  for (const gateway of gatewayNodes) {
+    const gatewayNamespace = String(gateway.data.namespace ?? '');
+    const controllerNodes = incomingEdges(gateway.id, ['controls'])
+      .map((edge) => nodeById.get(edge.source))
+      .filter((node): node is TopologyNode => Boolean(node && isControllerNode(node)));
+    const externalNodes = incomingEdges(gateway.id, ['fronts'])
+      .map((edge) => nodeById.get(edge.source))
+      .filter((node): node is TopologyNode => Boolean(node));
+    const routeRecords: ExternalRouteRecord[] = [];
+
+    for (const routeEdge of outgoingEdges(gateway.id, ['attaches', 'rejected'])) {
+      const route = nodeById.get(routeEdge.target);
+      if (!route || kindOf(route) !== 'route') {
+        continue;
+      }
+      const hosts = propertyValues(route.data.properties?.hostnames);
+      const routeHosts = hosts.length > 0 ? hosts : ['*'];
+      const paths = propertyValues(route.data.properties?.paths);
+      const routePaths = paths.length > 0 ? paths : ['/'];
+      const serviceNodes = outgoingEdges(route.id, ['routes'])
+        .map((edge) => nodeById.get(edge.target))
+        .filter((node): node is TopologyNode => Boolean(node && kindOf(node) === 'service'));
+
+      for (const host of routeHosts) {
+        const hostLaneId = ingressHostLaneId(gatewayNamespace, gateway, host);
+        if (serviceNodes.length === 0) {
+          const missing = syntheticMissingServiceNode(gatewayNamespace, route);
+          routeRecords.push({ route, displayService: missing, host, path: routePaths[0], hostLaneId });
+          for (const path of routePaths) {
+            routeItems.push(routeItemFromExternal(route, gateway, hostLaneId, host, path));
+          }
+          continue;
+        }
+        for (const service of serviceNodes) {
+          routeRecords.push({ route, service, displayService: service, host, path: routePaths[0], hostLaneId });
+          for (const path of routePaths) {
+            routeItems.push(routeItemFromExternal(route, gateway, hostLaneId, host, path, service));
+          }
+        }
+      }
+    }
+
+    const recordsByHostLane = new Map<string, ExternalRouteRecord[]>();
+    for (const record of routeRecords) {
+      recordsByHostLane.set(record.hostLaneId, [...(recordsByHostLane.get(record.hostLaneId) ?? []), record]);
+    }
+    for (const [hostLaneId, records] of recordsByHostLane) {
+      const laneGateway = laneNode(gateway, hostLaneId);
+      addNode(laneGateway);
+
+      const entries = externalNodes.length > 0 ? externalNodes : [namespaceTrafficNode(gatewayNamespace)];
+      const controllers = controllerNodes.length > 0 ? controllerNodes : [];
+      for (const entry of entries) {
+        const laneEntry = laneNode(entry, hostLaneId);
+        addNode(laneEntry);
+        if (controllers.length === 0) {
+          addEdge(laneEdge(laneEntry, laneGateway, 'traffic'));
+          continue;
+        }
+        for (const controller of controllers) {
+          const laneController = laneNode(controller, hostLaneId);
+          addNode(laneController);
+          addEdge(laneEdge(laneEntry, laneController, 'traffic'));
+          addEdge(laneEdge(laneController, laneGateway, 'controls'));
+        }
+      }
+
+      for (const record of records) {
+        const laneRoute = laneNode(record.route, record.route.id);
+        addNode(laneRoute);
+        addEdge(laneEdge(laneGateway, laneRoute, record.route.data.status === 'Accepted=False' ? 'rejected' : 'attaches'));
+        if (record.service) {
+          addServiceBranch(laneRoute, record.service, record.route.id, record.route);
+        } else {
+          const laneMissing = laneNode(record.displayService, record.route.id);
+          addNode(laneMissing);
+          addEdge(laneEdge(laneRoute, laneMissing, 'missing'));
+        }
+      }
+    }
+  }
+
+  for (const f5 of f5Nodes) {
+    const f5Namespace = String(f5.data.namespace ?? '');
+    const hosts = propertyValues(f5.data.properties?.hostnames);
+    const routeHosts = hosts.length > 0 ? hosts : [String(f5.data.name || f5.data.label || 'F5')];
+    const services = outgoingEdges(f5.id, ['balances'])
+      .map((edge) => nodeById.get(edge.target))
+      .filter((node): node is TopologyNode => Boolean(node && kindOf(node) === 'service'));
+
+    for (const host of routeHosts) {
+      const hostLaneId = ingressHostLaneId(f5Namespace, f5, host);
+      const laneF5 = laneNode(f5, hostLaneId);
+      addNode(laneF5);
+
+      if (services.length === 0) {
+        const missing = syntheticMissingServiceNode(f5Namespace, f5);
+        const laneMissing = laneNode(missing, hostLaneId);
+        addNode(laneMissing);
+        addEdge(laneEdge(laneF5, laneMissing, 'missing'));
+        routeItems.push(routeItemFromExternal(f5, f5, hostLaneId, host, '/'));
+        continue;
+      }
+
+      for (const service of services) {
+        const itemId = `${f5.id}:${service.id}`;
+        routeItems.push({
+          id: itemId,
+          topologyId: hostLaneId,
+          ingressId: f5.id,
+          rootKind: String(f5.data.properties?.kind ?? 'F5'),
+          serviceId: service.id,
+          namespace: f5Namespace,
+          name: String(f5.data.name ?? f5.data.label),
+          host,
+          path: '/',
+          hostLaneId,
+          ingress: ingressRouteLabel(f5),
+          backend: nodeDisplayName(service),
+          status: String(f5.data.status ?? 'Configured'),
+          severity: routeSeverity(f5),
+        });
+        const summarySource = { ...f5, id: itemId };
+        addServiceBranch(laneF5, service, hostLaneId, summarySource, 'balances');
       }
     }
   }
@@ -525,5 +758,32 @@ export function buildNamespaceTrafficGraph(
       if (ingress !== 0) return ingress;
       return left.name.localeCompare(right.name);
     }),
+  };
+}
+
+function routeItemFromExternal(
+  route: TopologyNode,
+  root: TopologyNode,
+  hostLaneId: string,
+  host: string,
+  path: string,
+  service?: TopologyNode,
+): RouteItem {
+  const backend = service ? nodeDisplayName(service) : String(route.data.properties?.referenceError ?? 'missing service');
+  return {
+    id: `${route.id}:${safeVisualId(host)}:${safeVisualId(path)}:${service?.id ?? 'missing'}`,
+    topologyId: route.id,
+    ingressId: root.id,
+    rootKind: String(root.data.kind ?? 'Gateway'),
+    serviceId: service?.id ?? '',
+    namespace: String(root.data.namespace ?? route.data.namespace ?? ''),
+    name: String(route.data.label ?? route.data.name),
+    host,
+    path,
+    hostLaneId,
+    ingress: ingressRouteLabel(root),
+    backend,
+    status: String(route.data.status ?? 'Unknown'),
+    severity: routeSeverity(route),
   };
 }

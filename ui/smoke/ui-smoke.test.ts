@@ -20,9 +20,11 @@ import {
 import { reconcileTopologyEdges, reconcileTopologyNodes } from '../src/flowState.ts';
 
 function route(overrides: Partial<RouteItem>): RouteItem {
-  return {
+  const item = {
     id: 'route:default',
+    topologyId: 'route:default',
     ingressId: 'ingress:store',
+    rootKind: 'Ingress',
     serviceId: 'service:frontend',
     namespace: 'northscope',
     name: 'store',
@@ -34,6 +36,10 @@ function route(overrides: Partial<RouteItem>): RouteItem {
     status: 'Backends ready',
     severity: 'ok',
     ...overrides,
+  };
+  return {
+    ...item,
+    topologyId: overrides.topologyId ?? overrides.id ?? item.topologyId,
   };
 }
 
@@ -105,7 +111,7 @@ test('host route selection keeps all paths for the selected host together', () =
       node('ingress-shop', 'Ingress', 'lane:store:shop'),
       node('service-shop', 'Service', 'route:shop:/api'),
     ],
-    shop.routes.map((item) => item.id),
+    shop.routes.map((item) => item.topologyId),
     [shop.id],
   );
 

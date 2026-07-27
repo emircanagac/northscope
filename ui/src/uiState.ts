@@ -42,7 +42,7 @@ export function routeMatchesSearch(route: RouteItem, query: string): boolean {
     return true;
   }
 
-  return [route.namespace, route.ingress, route.host, route.path, route.backend, route.status]
+  return [route.namespace, route.rootKind, route.ingress, route.host, route.path, route.backend, route.status]
     .filter(Boolean)
     .some((value) => value.toLowerCase().includes(normalized));
 }

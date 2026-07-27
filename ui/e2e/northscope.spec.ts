@@ -112,7 +112,89 @@ const snapshot = {
   ],
 };
 
-async function installFakeTopologyStream(page: Page): Promise<void> {
+const gatewaySnapshot = {
+  ...snapshot,
+  nodes: [
+    {
+      id: 'loadbalancer:demo:gateway-public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Gateway LB',
+        kind: 'LoadBalancer',
+        namespace: 'demo',
+        name: 'gateway-public',
+        status: 'Active',
+        properties: { provider: 'Gateway API', address: '203.0.113.10' },
+      },
+    },
+    {
+      id: 'controller:public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: { label: 'public', kind: 'Controller', name: 'public', status: 'Configured' },
+    },
+    {
+      id: 'gateway:demo:public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: { label: 'demo/public', kind: 'Gateway', namespace: 'demo', name: 'public', status: 'Programmed' },
+    },
+    {
+      id: 'route:demo:store:HTTPRoute',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'demo/store',
+        kind: 'Route',
+        namespace: 'demo',
+        name: 'store',
+        status: 'Accepted',
+        properties: { kind: 'HTTPRoute', hostnames: 'gateway.example.com', paths: '/, /api' },
+      },
+    },
+    snapshot.nodes[3],
+    snapshot.nodes[4],
+    snapshot.nodes[5],
+  ],
+  edges: [
+    { id: 'lb-gateway', source: 'loadbalancer:demo:gateway-public', target: 'gateway:demo:public', data: { kind: 'fronts' } },
+    { id: 'controller-gateway', source: 'controller:public', target: 'gateway:demo:public', data: { kind: 'controls' } },
+    { id: 'gateway-route', source: 'gateway:demo:public', target: 'route:demo:store:HTTPRoute', data: { kind: 'attaches' } },
+    { id: 'gateway-service', source: 'route:demo:store:HTTPRoute', target: 'service:demo:frontend', data: { kind: 'routes' } },
+    snapshot.edges[3],
+    snapshot.edges[4],
+  ],
+};
+
+const f5Snapshot = {
+  ...snapshot,
+  nodes: [
+    {
+      id: 'loadbalancer:demo:f5-public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'F5VirtualServer',
+        kind: 'LoadBalancer',
+        namespace: 'demo',
+        name: 'public-vs',
+        status: 'Configured',
+        properties: { provider: 'F5', kind: 'F5VirtualServer', hostnames: 'f5.example.com' },
+      },
+    },
+    snapshot.nodes[3],
+    snapshot.nodes[4],
+    snapshot.nodes[5],
+  ],
+  edges: [
+    { id: 'f5-service', source: 'loadbalancer:demo:f5-public', target: 'service:demo:frontend', data: { kind: 'balances' } },
+    snapshot.edges[3],
+    snapshot.edges[4],
+  ],
+};
+
+async function installFakeTopologyStream(page: Page, topologySnapshot: object = snapshot): Promise<void> {
   await page.addInitScript((topologySnapshot) => {
     type SocketHandler = ((event: Event) => void) | null;
     type MessageHandler = ((event: MessageEvent) => void) | null;
@@ -167,7 +249,7 @@ async function installFakeTopologyStream(page: Page): Promise<void> {
       },
     };
     Object.assign(window, { WebSocket: FakeWebSocket });
-  }, snapshot);
+  }, topologySnapshot);
 }
 
 declare global {
@@ -185,13 +267,30 @@ declare global {
   }
 }
 
-async function openSelectedTopology(page: Page): Promise<void> {
-  await installFakeTopologyStream(page);
+async function openSelectedTopology(
+  page: Page,
+  topologySnapshot: object = snapshot,
+  host = 'shop.example.com',
+): Promise<void> {
+  await installFakeTopologyStream(page, topologySnapshot);
   await page.goto('/');
   await expect(page.getByTestId('stream-status')).toHaveText('Live config');
-  await page.getByTestId('host-route').filter({ hasText: 'shop.example.com' }).click();
+  await page.getByTestId('host-route').filter({ hasText: host }).click();
   await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
 }
+
+test('Gateway API resources are selectable traffic roots', async ({ page }) => {
+  await openSelectedTopology(page, gatewaySnapshot, 'gateway.example.com');
+  await expect(page.getByText('Gateway · 1 host / 2 paths')).toBeVisible();
+  await expect(page.locator('[data-kind="Gateway"]')).toBeVisible();
+  await expect(page.locator('[data-kind="Route"]')).toBeVisible();
+});
+
+test('F5 resources are selectable traffic roots', async ({ page }) => {
+  await openSelectedTopology(page, f5Snapshot, 'f5.example.com');
+  await expect(page.getByText('F5VirtualServer · 1 host / 1 path')).toBeVisible();
+  await expect(page.locator('[data-kind="LoadBalancer"]')).toBeVisible();
+});
 
 test('dark theme persists across reloads', async ({ page }) => {
   await openSelectedTopology(page);
