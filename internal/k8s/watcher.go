@@ -8,10 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
@@ -26,6 +28,7 @@ import (
 const defaultResyncPeriod = 10 * time.Minute
 const defaultRebuildDebounce = 250 * time.Millisecond
 const optionalResourceRefreshInterval = 2 * time.Minute
+const optionalResourceRequestTimeout = 15 * time.Second
 
 type Watcher struct {
 	discovery       discovery.DiscoveryInterface
@@ -60,6 +63,7 @@ type Watcher struct {
 	optionalResourceLastRefresh          time.Time
 	optionalResourceGVRs                 map[schema.GroupVersionResource]struct{}
 	optionalResourceCache                []ExternalResource
+	optionalInformers                    []cache.SharedIndexInformer
 
 	buildSnapshotFunc func() (models.TopologySnapshot, error)
 }
@@ -141,8 +145,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 
 	log.Printf("NorthScope Kubernetes caches synced")
+	w.startOptionalInformers(ctx)
 	atomic.StoreUint32(&w.ready, 1)
-	w.rebuildAndPublish()
+	w.rebuildAndPublishContext(ctx)
 
 	return w.runRebuildLoop(ctx)
 }
@@ -173,10 +178,10 @@ func (w *Watcher) runRebuildLoop(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			stopDebounce()
-			w.rebuildAndPublish()
+			w.rebuildAndPublishContext(ctx)
 		case <-w.rebuildRequests:
 			if w.rebuildDebounce <= 0 {
-				w.rebuildAndPublish()
+				w.rebuildAndPublishContext(ctx)
 				continue
 			}
 			if debounceTimer == nil {
@@ -188,7 +193,7 @@ func (w *Watcher) runRebuildLoop(ctx context.Context) error {
 			debounceC = debounceTimer.C
 		case <-debounceC:
 			debounceC = nil
-			w.rebuildAndPublish()
+			w.rebuildAndPublishContext(ctx)
 		}
 	}
 }
@@ -282,8 +287,12 @@ func (w *Watcher) rebuildAndPublishWhenReady() {
 }
 
 func (w *Watcher) rebuildAndPublish() {
+	w.rebuildAndPublishContext(context.Background())
+}
+
+func (w *Watcher) rebuildAndPublishContext(ctx context.Context) {
 	started := time.Now()
-	snapshot, err := w.nextSnapshot()
+	snapshot, err := w.nextSnapshot(ctx)
 	if err != nil {
 		w.mu.Lock()
 		w.snapshotBuildErrorsTotal++
@@ -330,14 +339,14 @@ func (w *Watcher) rebuildAndPublish() {
 	}
 }
 
-func (w *Watcher) nextSnapshot() (models.TopologySnapshot, error) {
+func (w *Watcher) nextSnapshot(ctx context.Context) (models.TopologySnapshot, error) {
 	if w.buildSnapshotFunc != nil {
 		return w.buildSnapshotFunc()
 	}
-	return w.buildSnapshot()
+	return w.buildSnapshot(ctx)
 }
 
-func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
+func (w *Watcher) buildSnapshot(ctx context.Context) (models.TopologySnapshot, error) {
 	ingresses, err := w.ingressInformer.Lister().List(labels.Everything())
 	if err != nil {
 		return models.TopologySnapshot{}, err
@@ -366,7 +375,7 @@ func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
 	if err != nil {
 		return models.TopologySnapshot{}, err
 	}
-	externalResources := w.optionalExternalResources(context.Background())
+	externalResources := w.optionalExternalResources(ctx)
 
 	snapshot := BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices)
 	snapshot.Inventory = models.ClusterInventory{
@@ -403,11 +412,15 @@ func (w *Watcher) optionalExternalResources(ctx context.Context) []ExternalResou
 		}
 	}
 
-	resources := listOptionalExternalResources(ctx, w.dynamicClient, availableGVRs)
+	requestCtx, cancel := context.WithTimeout(ctx, optionalResourceRequestTimeout)
+	defer cancel()
+	resources, complete := listOptionalExternalResources(requestCtx, w.dynamicClient, availableGVRs)
 	w.optionalResourceGVRs = availableGVRs
-	w.optionalResourceCache = append([]ExternalResource(nil), resources...)
+	if complete || w.optionalResourceCache == nil {
+		w.optionalResourceCache = append([]ExternalResource(nil), resources...)
+	}
 	w.optionalResourceLastRefresh = now
-	return resources
+	return append([]ExternalResource(nil), w.optionalResourceCache...)
 }
 
 func (w *Watcher) availableOptionalResourceGVRs() (map[schema.GroupVersionResource]struct{}, error) {
@@ -439,12 +452,54 @@ func (w *Watcher) availableOptionalResourceGVRs() (map[schema.GroupVersionResour
 	}
 
 	available := make(map[schema.GroupVersionResource]struct{})
-	for _, item := range optionalTopologyResources {
-		if _, ok := served[item.gvr]; ok {
-			available[item.gvr] = struct{}{}
-		}
+	for _, item := range preferredOptionalResources(served) {
+		available[item.gvr] = struct{}{}
 	}
 	return available, nil
+}
+
+func (w *Watcher) startOptionalInformers(ctx context.Context) {
+	if w.dynamicClient == nil {
+		return
+	}
+
+	available, err := w.availableOptionalResourceGVRs()
+	if err != nil {
+		w.optionalResourceDiscoveryWarningOnce.Do(func() {
+			log.Printf("optional Gateway/F5 watches disabled; API resource discovery failed: %v", err)
+		})
+		return
+	}
+
+	handler := cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(interface{}) { w.optionalResourceChanged() },
+		UpdateFunc: func(interface{}, interface{}) { w.optionalResourceChanged() },
+		DeleteFunc: func(interface{}) { w.optionalResourceChanged() },
+	}
+	for _, item := range preferredOptionalResources(available) {
+		namespace := metav1.NamespaceAll
+		informer := dynamicinformer.NewFilteredDynamicInformer(
+			w.dynamicClient,
+			item.gvr,
+			namespace,
+			w.resyncPeriod,
+			cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+			nil,
+		).Informer()
+		if _, err := informer.AddEventHandler(handler); err != nil {
+			log.Printf("register optional topology watch %s failed: %v", item.gvr.String(), err)
+			continue
+		}
+		w.optionalInformers = append(w.optionalInformers, informer)
+		go informer.Run(ctx.Done())
+	}
+}
+
+func (w *Watcher) optionalResourceChanged() {
+	w.optionalResourceMu.Lock()
+	w.optionalResourceLastRefresh = time.Time{}
+	w.optionalResourceMu.Unlock()
+	w.rebuildAndPublishWhenReady()
 }
 
 func (w *Watcher) unsubscribe(ch chan models.TopologySnapshot) {

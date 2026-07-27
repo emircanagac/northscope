@@ -54,6 +54,14 @@ func BuildTopologyWithResourcesAndEndpoints(
 	endpointStatsByService := collectEndpointStats(endpointSlices)
 	endpointSliceServiceKeys := servicesWithEndpointSlices(endpointSlices)
 	mergeEndpointStats(endpointStatsByService, collectLegacyEndpointStats(endpoints), endpointSliceServiceKeys)
+	externalResourcesByKey := make(map[string]ExternalResource, len(externalResources))
+	var referenceGrants []ExternalResource
+	for _, resource := range externalResources {
+		externalResourcesByKey[externalResourceKey(resource)] = resource
+		if resource.Kind == ExternalKindReferenceGrant {
+			referenceGrants = append(referenceGrants, resource)
+		}
+	}
 
 	for _, ingressClass := range ingressClasses {
 		ingressClassesByName[ingressClass.Name] = ingressClass
@@ -175,7 +183,7 @@ func BuildTopologyWithResourcesAndEndpoints(
 	}
 
 	for _, resource := range externalResources {
-		builder.addExternalResource(resource, services)
+		builder.addExternalResource(resource, servicesByKey, externalResourcesByKey, referenceGrants)
 	}
 
 	for _, svc := range services {

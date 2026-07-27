@@ -359,7 +359,12 @@ func (b *topologyBuilder) addExternalNameEndpoint(service *corev1.Service) {
 	})
 }
 
-func (b *topologyBuilder) addExternalResource(resource ExternalResource, services []*corev1.Service) {
+func (b *topologyBuilder) addExternalResource(
+	resource ExternalResource,
+	servicesByKey map[string]*corev1.Service,
+	externalResourcesByKey map[string]ExternalResource,
+	referenceGrants []ExternalResource,
+) {
 	switch resource.Kind {
 	case ExternalKindGatewayClass:
 		controller := resource.Properties["controllerName"]
@@ -370,7 +375,10 @@ func (b *topologyBuilder) addExternalResource(resource ExternalResource, service
 	case ExternalKindGateway:
 		b.addGateway(resource)
 		if resource.ClassName != "" {
-			b.addEdge(controllerNodeID(resource.ClassName), gatewayNodeID(resource.Namespace, resource.Name), "controls", "GatewayClass")
+			classResource := ExternalResource{Kind: ExternalKindGatewayClass, Name: resource.ClassName}
+			if _, ok := externalResourcesByKey[externalResourceKey(classResource)]; ok {
+				b.addEdge(controllerNodeID(resource.ClassName), gatewayNodeID(resource.Namespace, resource.Name), "controls", "GatewayClass")
+			}
 		}
 		for _, address := range resource.Addresses {
 			lbID := gatewayLoadBalancerNodeID(resource.Namespace, resource.Name, address)
@@ -384,29 +392,60 @@ func (b *topologyBuilder) addExternalResource(resource ExternalResource, service
 			b.addDNS(hostname, gatewayNodeID(resource.Namespace, resource.Name))
 		}
 	case ExternalKindHTTPRoute, ExternalKindGRPCRoute, ExternalKindTLSRoute, ExternalKindTCPRoute, ExternalKindUDPRoute:
-		b.addRoute(resource)
+		routeID := routeNodeID(resource.Namespace, resource.Name, string(resource.Kind))
+		var referenceErrors []string
 		for _, parent := range resource.ParentRefs {
-			if strings.EqualFold(parent.Kind, "Gateway") || parent.Kind == "" {
-				namespace := parent.Namespace
-				if namespace == "" {
-					namespace = resource.Namespace
-				}
-				b.addEdge(gatewayNodeID(namespace, parent.Name), routeNodeID(resource.Namespace, resource.Name, string(resource.Kind)), "attaches", string(resource.Kind))
+			if !isGatewayParent(parent) {
+				referenceErrors = append(referenceErrors, "Unsupported parent "+parent.Kind+" "+parent.Name)
+				continue
 			}
+			namespace := parent.Namespace
+			if namespace == "" {
+				namespace = resource.Namespace
+			}
+			parentResource := ExternalResource{Kind: ExternalKindGateway, Namespace: namespace, Name: parent.Name}
+			if _, ok := externalResourcesByKey[externalResourceKey(parentResource)]; !ok {
+				referenceErrors = append(referenceErrors, "Gateway "+displayName(namespace, parent.Name)+" was not found")
+				continue
+			}
+			edgeKind := "attaches"
+			if resource.Properties["accepted"] == "False" {
+				edgeKind = "rejected"
+			}
+			b.addEdge(gatewayNodeID(namespace, parent.Name), routeID, edgeKind, string(resource.Kind))
 		}
 		for _, backend := range resource.Backends {
-			if backend.Kind != "" && !strings.EqualFold(backend.Kind, "Service") {
+			if !isServiceBackend(backend) {
+				referenceErrors = append(referenceErrors, "Unsupported backend "+backendReferenceName(backend))
 				continue
 			}
 			namespace := backend.Namespace
 			if namespace == "" {
 				namespace = resource.Namespace
 			}
-			b.addEdge(routeNodeID(resource.Namespace, resource.Name, string(resource.Kind)), nodeID(models.NodeKindService, namespace, backend.Name), "routes", string(resource.Kind))
+			if _, ok := servicesByKey[namespacedKey(namespace, backend.Name)]; !ok {
+				referenceErrors = append(referenceErrors, "Service "+displayName(namespace, backend.Name)+" was not found")
+				continue
+			}
+			if namespace != resource.Namespace && !backendReferenceGranted(resource, backend, namespace, referenceGrants) {
+				referenceErrors = append(referenceErrors, "ReferenceGrant required for Service "+displayName(namespace, backend.Name))
+				continue
+			}
+			b.addEdge(routeID, nodeID(models.NodeKindService, namespace, backend.Name), "routes", string(resource.Kind))
 		}
+		if len(referenceErrors) > 0 {
+			if resource.Properties == nil {
+				resource.Properties = map[string]string{}
+			}
+			resource.Properties["status"] = "Reference error"
+			resource.Properties["referenceError"] = strings.Join(referenceErrors, "; ")
+		}
+		b.addRoute(resource)
 		for _, hostname := range resource.Hostnames {
-			b.addDNS(hostname, routeNodeID(resource.Namespace, resource.Name, string(resource.Kind)))
+			b.addDNS(hostname, routeID)
 		}
+	case ExternalKindReferenceGrant:
+		return
 	case ExternalKindF5IngressLink, ExternalKindF5Virtual, ExternalKindF5Transport:
 		lbID := externalResourceNodeID(resource)
 		address := firstNonEmpty(resource.Addresses)
@@ -415,14 +454,21 @@ func (b *topologyBuilder) addExternalResource(resource ExternalResource, service
 			b.addDNS(hostname, lbID)
 		}
 		for _, backend := range resource.Backends {
-			if backend.Kind != "" && !strings.EqualFold(backend.Kind, "Service") {
+			if !isServiceBackend(backend) {
 				continue
 			}
 			namespace := backend.Namespace
 			if namespace == "" {
 				namespace = resource.Namespace
 			}
+			if _, ok := servicesByKey[namespacedKey(namespace, backend.Name)]; !ok {
+				continue
+			}
 			b.addEdge(lbID, nodeID(models.NodeKindService, namespace, backend.Name), "balances", string(resource.Kind))
+		}
+		services := make([]*corev1.Service, 0, len(servicesByKey))
+		for _, service := range servicesByKey {
+			services = append(services, service)
 		}
 		for _, service := range servicesMatchingSelector(services, resource.Namespace, resource.Selector) {
 			b.addEdge(lbID, nodeID(models.NodeKindService, service.Namespace, service.Name), "balances", string(resource.Kind))
@@ -462,6 +508,9 @@ func (b *topologyBuilder) addRoute(resource ExternalResource) {
 	if len(resource.Hostnames) > 0 {
 		properties["hostnames"] = strings.Join(resource.Hostnames, ", ")
 	}
+	if len(resource.Paths) > 0 {
+		properties["paths"] = strings.Join(resource.Paths, ", ")
+	}
 
 	b.addNode(models.Node{
 		ID:       routeNodeID(resource.Namespace, resource.Name, string(resource.Kind)),
@@ -476,6 +525,65 @@ func (b *topologyBuilder) addRoute(resource ExternalResource) {
 			Properties: properties,
 		},
 	})
+}
+
+func externalResourceKey(resource ExternalResource) string {
+	return string(resource.Kind) + ":" + namespacedKey(resource.Namespace, resource.Name)
+}
+
+func isServiceBackend(backend ExternalBackendRef) bool {
+	group := strings.TrimSpace(backend.Group)
+	kind := strings.TrimSpace(backend.Kind)
+	return (group == "" || group == "core") && (kind == "" || strings.EqualFold(kind, "Service"))
+}
+
+func isGatewayParent(parent ExternalParentRef) bool {
+	group := strings.TrimSpace(parent.Group)
+	kind := strings.TrimSpace(parent.Kind)
+	return (group == "" || group == "gateway.networking.k8s.io") &&
+		(kind == "" || strings.EqualFold(kind, "Gateway"))
+}
+
+func backendReferenceName(backend ExternalBackendRef) string {
+	kind := backend.Kind
+	if kind == "" {
+		kind = "Service"
+	}
+	return kind + " " + displayName(backend.Namespace, backend.Name)
+}
+
+func backendReferenceGranted(
+	route ExternalResource,
+	backend ExternalBackendRef,
+	targetNamespace string,
+	grants []ExternalResource,
+) bool {
+	routeGroup := "gateway.networking.k8s.io"
+	for _, grant := range grants {
+		if grant.Namespace != targetNamespace {
+			continue
+		}
+		fromMatches := false
+		for _, from := range grant.GrantFrom {
+			if from.Namespace == route.Namespace &&
+				from.Group == routeGroup &&
+				strings.EqualFold(from.Kind, string(route.Kind)) {
+				fromMatches = true
+				break
+			}
+		}
+		if !fromMatches {
+			continue
+		}
+		for _, to := range grant.GrantTo {
+			if (to.Group == "" || to.Group == "core") &&
+				strings.EqualFold(to.Kind, "Service") &&
+				(to.Name == "" || to.Name == backend.Name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *topologyBuilder) addDNS(hostname, targetID string) {
