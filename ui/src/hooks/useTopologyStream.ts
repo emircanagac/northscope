@@ -40,7 +40,7 @@ export type TopologyNode = Node<TopologyNodeData>;
 export type TopologyEdge = Edge<TopologyEdgeData>;
 
 export interface ClusterInventory {
-  controllers: number;
+  ingressClasses: number;
   ingresses: number;
   services: number;
   pods: number;

@@ -9,11 +9,11 @@ import (
 func TestIngressScopedSnapshotRemovesUnrelatedClusterResources(t *testing.T) {
 	snapshot := models.TopologySnapshot{
 		Inventory: models.ClusterInventory{
-			Controllers: 1,
-			Ingresses:   1,
-			Services:    2,
-			Pods:        2,
-			Nodes:       2,
+			IngressClasses: 1,
+			Ingresses:      1,
+			Services:       2,
+			Pods:           2,
+			Nodes:          2,
 		},
 		Nodes: []models.Node{
 			{ID: "ingress", Data: models.NodeData{Kind: models.NodeKindIngress}},

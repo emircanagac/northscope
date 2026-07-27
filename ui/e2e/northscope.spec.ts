@@ -4,7 +4,7 @@ const snapshot = {
   version: 1,
   generatedAt: '2026-07-16T12:00:00Z',
   inventory: {
-    controllers: 1,
+    ingressClasses: 1,
     ingresses: 1,
     services: 12,
     pods: 36,
@@ -44,7 +44,7 @@ const snapshot = {
         kind: 'Route',
         namespace: 'demo',
         name: 'shop.example.com /',
-        status: 'Healthy',
+        status: 'Backends ready',
         properties: {
           host: 'shop.example.com',
           path: '/',

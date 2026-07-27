@@ -12,9 +12,17 @@ import (
 	"github.com/emircanagac/northscope/internal/models"
 )
 
+const defaultIngressClassAnnotation = "ingressclass.kubernetes.io/is-default-class"
+
 func ingressControllerClassName(ingress *networkingv1.Ingress, ingressClassesByName map[string]*networkingv1.IngressClass) string {
 	className := ingressClassName(ingress)
 	if className != "" {
+		if _, ok := ingressClassesByName[className]; ok {
+			return className
+		}
+		return ""
+	}
+	if className := defaultIngressClassName(ingressClassesByName); className != "" {
 		return className
 	}
 	if len(ingressClassesByName) == 1 {
@@ -26,54 +34,107 @@ func ingressControllerClassName(ingress *networkingv1.Ingress, ingressClassesByN
 }
 
 func matchingIngressClassName(service *corev1.Service, pods []*corev1.Pod, ingressClassesByName map[string]*networkingv1.IngressClass) string {
-	if len(ingressClassesByName) == 0 || !serviceLooksLikeIngressController(service, pods) {
+	if len(ingressClassesByName) == 0 ||
+		(service.Spec.Type != corev1.ServiceTypeNodePort && service.Spec.Type != corev1.ServiceTypeLoadBalancer) {
 		return ""
-	}
-
-	if len(ingressClassesByName) == 1 {
-		for name := range ingressClassesByName {
-			return name
-		}
 	}
 
 	serviceText := strings.ToLower(strings.Join(serviceIdentityTerms(service, pods), " "))
 	bestScore := 0
 	bestName := ""
+	bestTied := false
 	for name, ingressClass := range ingressClassesByName {
-		score := 0
-		className := strings.ToLower(name)
-		controller := strings.ToLower(ingressClass.Spec.Controller)
-		if className != "" && strings.Contains(serviceText, className) {
-			score += 2
-		}
-		if controller != "" && strings.Contains(serviceText, controller) {
-			score += 2
-		}
-		if strings.Contains(serviceText, "ingress") {
-			score++
-		}
-		if strings.Contains(serviceText, "controller") {
-			score++
-		}
+		score := ingressControllerServiceScore(service, serviceText, name, ingressClass.Spec.Controller)
 		if score > bestScore {
 			bestScore = score
 			bestName = name
+			bestTied = false
+		} else if score > 0 && score == bestScore {
+			bestTied = true
 		}
 	}
 
-	if bestScore == 0 {
+	if bestScore < 6 || bestTied {
 		return ""
 	}
 	return bestName
 }
 
-func serviceLooksLikeIngressController(service *corev1.Service, pods []*corev1.Pod) bool {
-	haystack := strings.ToLower(strings.Join(serviceIdentityTerms(service, pods), " "))
-	return strings.Contains(haystack, "ingress") ||
-		strings.Contains(haystack, "controller") ||
-		strings.Contains(haystack, "nginx") ||
-		strings.Contains(haystack, "traefik") ||
-		strings.Contains(haystack, "haproxy")
+func defaultIngressClassName(ingressClassesByName map[string]*networkingv1.IngressClass) string {
+	defaultName := ""
+	for name, ingressClass := range ingressClassesByName {
+		if !strings.EqualFold(ingressClass.Annotations[defaultIngressClassAnnotation], "true") {
+			continue
+		}
+		if defaultName != "" {
+			return ""
+		}
+		defaultName = name
+	}
+	return defaultName
+}
+
+func ingressControllerServiceScore(service *corev1.Service, serviceText, className, controller string) int {
+	className = strings.ToLower(className)
+	serviceName := strings.ToLower(service.Name)
+	score := 0
+	matchedIdentity := false
+
+	if className != "" && serviceName == className {
+		score += 6
+		matchedIdentity = true
+	} else if className != "" && strings.Contains(serviceText, className) {
+		score += 4
+		matchedIdentity = true
+	}
+
+	for _, token := range controllerIdentityTokens(controller) {
+		if token == className || strings.Contains(className, token) {
+			continue
+		}
+		if strings.Contains(serviceText, token) {
+			score += 2
+			matchedIdentity = true
+		}
+	}
+	if !matchedIdentity {
+		return 0
+	}
+	if strings.Contains(serviceText, "ingress") {
+		score += 2
+	}
+	if strings.Contains(serviceText, "controller") {
+		score += 2
+	}
+	if strings.EqualFold(service.Labels["app.kubernetes.io/component"], "controller") {
+		score += 4
+	}
+	return score
+}
+
+func controllerIdentityTokens(controller string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(controller), func(r rune) bool {
+		return r < 'a' || r > 'z'
+	})
+	ignored := map[string]struct{}{
+		"com": {}, "io": {}, "org": {}, "k8s": {}, "kubernetes": {}, "ingress": {}, "controller": {},
+	}
+	seen := map[string]struct{}{}
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(part) < 4 {
+			continue
+		}
+		if _, ok := ignored[part]; ok {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		tokens = append(tokens, part)
+	}
+	return tokens
 }
 
 func serviceIdentityTerms(service *corev1.Service, pods []*corev1.Pod) []string {

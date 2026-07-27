@@ -60,11 +60,11 @@ type Edge struct {
 }
 
 type ClusterInventory struct {
-	Controllers int `json:"controllers"`
-	Ingresses   int `json:"ingresses"`
-	Services    int `json:"services"`
-	Pods        int `json:"pods"`
-	Nodes       int `json:"nodes"`
+	IngressClasses int `json:"ingressClasses"`
+	Ingresses      int `json:"ingresses"`
+	Services       int `json:"services"`
+	Pods           int `json:"pods"`
+	Nodes          int `json:"nodes"`
 }
 
 type TopologySnapshot struct {

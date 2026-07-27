@@ -58,7 +58,7 @@ NorthScope can display internal topology metadata, including:
 - EndpointSlice and legacy Endpoints addresses, including external endpoint IPs for selector-less Services
 - Gateway API and F5 CIS object names and selected routing fields when those CRDs are present
 
-Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. Cluster inventory counters remain cluster-wide and can reveal the number of controllers, Ingress objects, Services, Pods, and Nodes.
+Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. Cluster inventory counters remain cluster-wide and can reveal the number of IngressClasses, Ingress objects, Services, Pods, and Nodes.
 
 NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, and websocket clients. Keep metrics access behind the same trusted boundary as the UI.
 

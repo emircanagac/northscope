@@ -90,16 +90,6 @@ func diagnoseIngressRoute(
 			Confidence: "Certain",
 		}
 	}
-	if service.Spec.Type == corev1.ServiceTypeExternalName && service.Spec.ExternalName != "" {
-		return routeDiagnosis{
-			Status:     "Healthy",
-			Severity:   "ok",
-			Message:    fmt.Sprintf("Route resolves to ExternalName Service %q targeting %q.", service.Name, service.Spec.ExternalName),
-			NextStep:   "If users still fail, verify external DNS, upstream reachability, TLS, and NetworkPolicy.",
-			Kubectl:    fmt.Sprintf("kubectl get svc %s -n %s -o yaml", service.Name, service.Namespace),
-			Confidence: "Configured",
-		}
-	}
 	if controllerClassName == "" {
 		return routeDiagnosis{
 			Status:     "Warning",
@@ -108,6 +98,16 @@ func diagnoseIngressRoute(
 			NextStep:   "Check ingressClassName, the default IngressClass, and the controller deployment.",
 			Kubectl:    baseKubectl,
 			Confidence: "Inferred",
+		}
+	}
+	if service.Spec.Type == corev1.ServiceTypeExternalName && service.Spec.ExternalName != "" {
+		return routeDiagnosis{
+			Status:     "Configured",
+			Severity:   "info",
+			Message:    fmt.Sprintf("Route references ExternalName Service %q targeting %q; upstream reachability is not probed.", service.Name, service.Spec.ExternalName),
+			NextStep:   "Verify external DNS, upstream reachability, TLS, and NetworkPolicy.",
+			Kubectl:    fmt.Sprintf("kubectl get svc %s -n %s -o yaml", service.Name, service.Namespace),
+			Confidence: "Configured",
 		}
 	}
 	if len(service.Spec.Selector) > 0 && len(servicePods) == 0 {
@@ -172,9 +172,9 @@ func diagnoseIngressRoute(
 		}
 	}
 	return routeDiagnosis{
-		Status:     "Healthy",
+		Status:     "Backends ready",
 		Severity:   "ok",
-		Message:    fmt.Sprintf("Route resolves to Service %q with %d usable endpoint(s).", service.Name, maxInt(stats.Usable, readyPods)),
+		Message:    fmt.Sprintf("Route resolves to Service %q with %d usable endpoint(s); end-to-end traffic is not probed.", service.Name, maxInt(stats.Usable, readyPods)),
 		NextStep:   "If users still fail, verify controller logs, cloud/F5 load balancer health checks, TLS, and NetworkPolicy.",
 		Kubectl:    fmt.Sprintf("kubectl describe ingress %s -n %s; kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide; kubectl get endpoints %s -n %s", ingress.Name, ingress.Namespace, service.Namespace, service.Name, service.Name, service.Namespace),
 		Confidence: "Configured",
@@ -209,7 +209,7 @@ func podIsReady(pod *corev1.Pod) bool {
 			return condition.Status == corev1.ConditionTrue
 		}
 	}
-	return pod.Status.Phase == corev1.PodRunning
+	return false
 }
 
 func labelSelectorForDisplay(selector map[string]string) string {

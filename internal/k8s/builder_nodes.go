@@ -93,7 +93,9 @@ func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route i
 }
 
 func (b *topologyBuilder) addController(className, controller string) {
-	properties := map[string]string{}
+	properties := map[string]string{
+		"source": "IngressClass",
+	}
 	if className != "" {
 		properties["className"] = className
 	}
@@ -109,7 +111,7 @@ func (b *topologyBuilder) addController(className, controller string) {
 			Label:      className,
 			Kind:       models.NodeKindController,
 			Name:       className,
-			Status:     controller,
+			Status:     "Configured",
 			Properties: properties,
 		},
 	})

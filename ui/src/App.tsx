@@ -186,7 +186,7 @@ export default function App() {
   const summary = snapshot?.inventory ?? topologySummary;
   const clusterInventory = useMemo(
     () =>
-      `${summary.controllers} controller${summary.controllers === 1 ? '' : 's'} · ${summary.ingresses} ingress object${
+      `${summary.ingressClasses} ingress class${summary.ingressClasses === 1 ? '' : 'es'} · ${summary.ingresses} ingress object${
         summary.ingresses === 1 ? '' : 's'
       } · ${summary.services} service${summary.services === 1 ? '' : 's'} · ${summary.pods} pod${summary.pods === 1 ? '' : 's'} · ${
         summary.nodes

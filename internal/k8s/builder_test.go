@@ -471,7 +471,7 @@ func TestBuildTopologyPrefersEndpointSliceStatsOverLegacyEndpoints(t *testing.T)
 	)
 
 	route := findRouteNodeByBackend(t, snapshot, "legacy:http")
-	if route.Data.Properties["diagnosis"] != `Route resolves to Service "legacy" with 1 usable endpoint(s).` {
+	if route.Data.Properties["diagnosis"] != `Route resolves to Service "legacy" with 1 usable endpoint(s); end-to-end traffic is not probed.` {
 		t.Fatalf("expected EndpointSlice stats to avoid double-counting legacy Endpoints, got %#v", route.Data.Properties)
 	}
 }
@@ -535,8 +535,8 @@ func TestBuildTopologyExternalNameServiceTargetsExternalDNS(t *testing.T) {
 	if endpoint.Data.Properties["externalName"] != "legacy.internal.example.com" {
 		t.Fatalf("expected externalName property, got %#v", endpoint.Data.Properties)
 	}
-	if route.Data.Status != "Healthy" {
-		t.Fatalf("expected ExternalName route to be healthy, got %q", route.Data.Status)
+	if route.Data.Status != "Configured" {
+		t.Fatalf("expected ExternalName route to be configured, got %q", route.Data.Status)
 	}
 	assertEdge(t, snapshot, route.ID, serviceID, "routes")
 	assertEdge(t, snapshot, serviceID, externalNameID, "externalname")
@@ -743,6 +743,100 @@ func TestBuildTopologyDoesNotGuessIngressControllerWhenMultipleClassesExist(t *t
 	assertNode(t, snapshot, ingressID)
 	assertNoEdge(t, snapshot, controllerNodeID("nginx"), ingressID, "controls")
 	assertNoEdge(t, snapshot, controllerNodeID("traefik"), ingressID, "controls")
+}
+
+func TestBuildTopologyUsesDefaultIngressClassWhenSeveralClassesExist(t *testing.T) {
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "unclassified"},
+		}},
+		[]*networkingv1.IngressClass{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "nginx",
+					Annotations: map[string]string{
+						defaultIngressClassAnnotation: "true",
+					},
+				},
+				Spec: networkingv1.IngressClassSpec{Controller: "k8s.io/ingress-nginx"},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "traefik"},
+				Spec:       networkingv1.IngressClassSpec{Controller: "traefik.io/ingress-controller"},
+			},
+		},
+		nil,
+		nil,
+	)
+
+	ingressID := nodeID(models.NodeKindIngress, "default", "unclassified")
+	assertEdge(t, snapshot, controllerNodeID("nginx"), ingressID, "controls")
+	assertNoEdge(t, snapshot, controllerNodeID("traefik"), ingressID, "controls")
+}
+
+func TestBuildTopologyDoesNotResolveMissingExplicitIngressClass(t *testing.T) {
+	className := "missing"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api"},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules: []networkingv1.IngressRule{{
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: "api",
+										Port: networkingv1.ServiceBackendPort{Number: 80},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}},
+		nil,
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api"},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
+		}},
+		nil,
+	)
+
+	ingressID := nodeID(models.NodeKindIngress, "default", "api")
+	assertNoEdge(t, snapshot, controllerNodeID(className), ingressID, "controls")
+	route := findRouteNodeByBackend(t, snapshot, "api:80")
+	if route.Data.Status != "Warning" {
+		t.Fatalf("expected unresolved class route warning, got %q", route.Data.Status)
+	}
+}
+
+func TestBuildTopologyDoesNotTreatGenericNodePortAsIngressController(t *testing.T) {
+	snapshot := BuildTopology(
+		nil,
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: "nginx"},
+			Spec:       networkingv1.IngressClassSpec{Controller: "k8s.io/ingress-nginx"},
+		}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "nginx-cache"},
+			Spec: corev1.ServiceSpec{
+				Type: corev1.ServiceTypeNodePort,
+				Ports: []corev1.ServicePort{{
+					Name:     "http",
+					Port:     80,
+					NodePort: 30080,
+				}},
+			},
+		}},
+		nil,
+	)
+
+	nodePortID := nodePortNodeID("apps", "nginx-cache", corev1.ServicePort{Name: "http", Port: 80})
+	assertNoEdge(t, snapshot, nodePortID, controllerNodeID("nginx"), "forwards")
+	assertEdge(t, snapshot, nodePortID, nodeID(models.NodeKindService, "apps", "nginx-cache"), "forwards")
 }
 
 func TestBuildTopologyRoutesIngressWithNamedBackendPort(t *testing.T) {

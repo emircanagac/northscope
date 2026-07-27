@@ -370,11 +370,11 @@ func (w *Watcher) buildSnapshot() (models.TopologySnapshot, error) {
 
 	snapshot := BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices)
 	snapshot.Inventory = models.ClusterInventory{
-		Controllers: len(ingressClasses),
-		Ingresses:   len(ingresses),
-		Services:    len(services),
-		Pods:        len(pods),
-		Nodes:       len(nodes),
+		IngressClasses: len(ingressClasses),
+		Ingresses:      len(ingresses),
+		Services:       len(services),
+		Pods:           len(pods),
+		Nodes:          len(nodes),
 	}
 	return ingressScopedSnapshot(snapshot), nil
 }

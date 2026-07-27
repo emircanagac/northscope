@@ -31,7 +31,7 @@ function route(overrides: Partial<RouteItem>): RouteItem {
     hostLaneId: 'lane:store:shop',
     ingress: 'store',
     backend: 'frontend:http',
-    status: 'Healthy',
+    status: 'Backends ready',
     severity: 'ok',
     ...overrides,
   };
