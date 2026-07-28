@@ -384,30 +384,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          release_title="NorthScope $GITHUB_REF_NAME"
+          release_notes="Versioned NorthScope container image and Helm chart release."
           assets=(
             .helm-repo/northscope-*.tgz
             .helm-repo/northscope-*.tgz.sha256
           )
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
-            gh release edit "$GITHUB_REF_NAME" \
-              --title "NorthScope $GITHUB_REF_NAME" \
-              --notes "Versioned NorthScope container image and Helm chart release."
+          if release_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              --jq '.id' \
+              2>/dev/null
+          )"; then
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -f name="$release_title" \
+              -f body="$release_notes" \
+              -f make_latest=true \
+              >/dev/null
           else
-            gh release create "$GITHUB_REF_NAME" \
-              "${assets[@]}" \
-              --verify-tag \
-              --title "NorthScope $GITHUB_REF_NAME" \
-              --notes "Versioned NorthScope container image and Helm chart release."
+            release_id="$(
+              gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/releases" \
+                -f tag_name="$GITHUB_REF_NAME" \
+                -f name="$release_title" \
+                -f body="$release_notes" \
+                -F draft=false \
+                -F prerelease=false \
+                -f make_latest=true \
+                --jq '.id'
+            )"
           fi
 
-          release_id="$(
-            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
-              --jq '.id'
-          )"
-          gh api \
-            --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
-            -f make_latest=true \
-            >/dev/null
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
