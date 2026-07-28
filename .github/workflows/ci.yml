@@ -393,13 +393,21 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
             gh release edit "$GITHUB_REF_NAME" \
               --title "NorthScope $GITHUB_REF_NAME" \
-              --notes "Versioned NorthScope container image and Helm chart release." \
-              --latest
+              --notes "Versioned NorthScope container image and Helm chart release."
           else
             gh release create "$GITHUB_REF_NAME" \
               "${assets[@]}" \
               --verify-tag \
               --title "NorthScope $GITHUB_REF_NAME" \
-              --notes "Versioned NorthScope container image and Helm chart release." \
-              --latest
+              --notes "Versioned NorthScope container image and Helm chart release."
           fi
+
+          release_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              --jq '.id'
+          )"
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -f make_latest=true \
+            >/dev/null
