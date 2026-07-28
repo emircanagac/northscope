@@ -22,10 +22,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -50,10 +50,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@59b1c81c6280f5abebb1fb1bc585696daa7dfb42 # v5
 
       - name: Lint chart
         run: helm lint charts/northscope
@@ -72,22 +72,30 @@ jobs:
             --set podDisruptionBudget.enabled=true \
             > /dev/null
 
+      - name: Render namespace-scoped discovery
+        run: |
+          helm template northscope charts/northscope \
+            --set watchNamespace=apps \
+            --set discovery.gatewayAPI.enabled=false \
+            --set discovery.f5.enabled=false \
+            > /dev/null
+
   browser:
     name: Browser E2E
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: mcr.microsoft.com/playwright:v1.56.1-noble
+      image: mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
     defaults:
       run:
         working-directory: ui
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 26
           cache: npm
@@ -101,7 +109,7 @@ jobs:
 
       - name: Upload browser diagnostics
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: playwright-report
           path: |
@@ -110,27 +118,90 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  container:
-    name: Container Build
-    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+
+  vulnerabilities:
+    name: Vulnerabilities
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare embedded UI fixture
+        run: |
+          mkdir -p ui/dist
+          printf '<!doctype html><title>NorthScope test fixture</title>\n' > ui/dist/index.html
+
+      - name: Scan Go dependencies
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Audit production UI dependencies
+        working-directory: ui
+        run: npm audit --omit=dev --audit-level=high
+
+  container:
+    name: Container
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Build Docker image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           target: runtime
           push: false
+          load: true
           tags: northscope:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Run runtime smoke test
+        run: bash hack/container-smoke.sh northscope:test
+
+      - name: Scan runtime image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: northscope:test
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.72.0
 
   publish:
     name: Publish Container
@@ -139,20 +210,24 @@ jobs:
       - go
       - helm
       - browser
+      - container
+      - vulnerabilities
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
+      attestations: write
       contents: read
       packages: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -160,7 +235,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/emircanagac/northscope
           tags: |
@@ -168,12 +243,146 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push image
-        uses: docker/build-push-action@v7
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           target: runtime
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Attest published image
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ghcr.io/emircanagac/northscope
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  publish-chart:
+    name: Publish Helm Chart
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - go
+      - helm
+      - browser
+      - container
+      - vulnerabilities
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@59b1c81c6280f5abebb1fb1bc585696daa7dfb42 # v5
+
+      - name: Validate release version alignment
+        run: |
+          release_version="${GITHUB_REF_NAME#v}"
+          chart_version="$(awk '/^version:/ {print $2; exit}' charts/northscope/Chart.yaml | tr -d '"')"
+          app_version="$(awk '/^appVersion:/ {print $2; exit}' charts/northscope/Chart.yaml | tr -d '"')"
+          image_tag="$(awk '/^image:/ {in_image=1; next} in_image && /^  tag:/ {print $2; exit}' charts/northscope/values.yaml | tr -d '"')"
+
+          if [ "$chart_version" != "$release_version" ]; then
+            echo "Chart version $chart_version does not match tag $release_version"
+            exit 1
+          fi
+
+          if [ "$app_version" != "$release_version" ]; then
+            echo "Chart appVersion $app_version does not match tag $release_version"
+            exit 1
+          fi
+
+          if [ "$image_tag" != "$release_version" ]; then
+            echo "Default image tag $image_tag does not match tag $release_version"
+            exit 1
+          fi
+
+      - name: Package chart
+        run: |
+          mkdir -p .helm-repo
+          helm lint charts/northscope
+          helm package charts/northscope --destination .helm-repo
+          sha256sum .helm-repo/northscope-*.tgz > ".helm-repo/northscope-${GITHUB_REF_NAME#v}.tgz.sha256"
+
+      - name: Merge existing chart index
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages; then
+            git fetch origin gh-pages --depth=1
+            git show origin/gh-pages:index.yaml > .helm-repo/index.yaml || true
+          fi
+          helm repo index .helm-repo \
+            --url https://emircanagac.github.io/northscope \
+            --merge .helm-repo/index.yaml
+
+      - name: Add chart repository landing page
+        run: |
+          cat > .helm-repo/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>NorthScope Helm Chart Repository</title>
+            <style>
+              body {
+                max-width: 760px;
+                margin: 48px auto;
+                padding: 0 20px;
+                color: #0f172a;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                line-height: 1.55;
+              }
+              code, pre {
+                border-radius: 8px;
+                background: #f1f5f9;
+              }
+              pre {
+                padding: 16px;
+                overflow-x: auto;
+              }
+              a {
+                color: #2563eb;
+              }
+            </style>
+          </head>
+          <body>
+            <h1>NorthScope Helm Chart Repository</h1>
+            <p>Read-only Kubernetes traffic topology debugger.</p>
+            <pre><code>helm repo add northscope https://emircanagac.github.io/northscope
+          helm repo update
+          helm upgrade --install northscope northscope/northscope \
+            --namespace northscope \
+            --create-namespace</code></pre>
+            <p><a href="https://github.com/emircanagac/northscope">GitHub repository</a></p>
+          </body>
+          </html>
+          EOF
+
+      - name: Publish chart repository
+        uses: peaceiris/actions-gh-pages@329bcc8f12caed2cefe5a5b80781499a6f3b361b # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: .helm-repo
+          keep_files: true
+          enable_jekyll: false
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            .helm-repo/northscope-*.tgz \
+            .helm-repo/northscope-*.tgz.sha256 \
+            --verify-tag \
+            --title "NorthScope $GITHUB_REF_NAME" \
+            --notes "Versioned NorthScope container image and Helm chart release."

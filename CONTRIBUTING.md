@@ -14,7 +14,7 @@ Thanks for considering a contribution. NorthScope is pre-beta, so the most valua
 
 Requirements:
 
-- Go 1.26+
+- Go 1.26.5+
 - Node.js 26+
 - npm
 - Docker, optional
