@@ -103,7 +103,7 @@ func scopedTopologyNeighbors(node models.Node, outgoing, incoming []models.Edge)
 		addOutgoing("controls")
 		addIncoming("forwards", "balances")
 	case models.NodeKindNodePort:
-		addOutgoing("forwards", "opens_on")
+		addOutgoing("forwards")
 		addIncoming("exposes")
 	case models.NodeKindLoadBalancer:
 		addOutgoing("balances", "exposes", "fronts")

@@ -120,9 +120,6 @@ func BuildTopologyWithResourcesAndEndpoints(
 				hasNodePort = true
 				builder.addNodePort(svc, port)
 				builder.addEdge(loadBalancerNodeID(svc.Namespace, svc.Name), nodePortNodeID(svc.Namespace, svc.Name, port), "exposes", "LoadBalancer")
-				for _, node := range nodes {
-					builder.addEdge(nodePortNodeID(svc.Namespace, svc.Name, port), nodeID(models.NodeKindNode, "", node.Name), "opens_on", "NodePort")
-				}
 				builder.addEdge(nodePortNodeID(svc.Namespace, svc.Name, port), targetNodeID, "forwards", "NodePort")
 			}
 			if !hasNodePort {
@@ -134,9 +131,6 @@ func BuildTopologyWithResourcesAndEndpoints(
 					continue
 				}
 				builder.addNodePort(svc, port)
-				for _, node := range nodes {
-					builder.addEdge(nodePortNodeID(svc.Namespace, svc.Name, port), nodeID(models.NodeKindNode, "", node.Name), "opens_on", "NodePort")
-				}
 				builder.addEdge(nodePortNodeID(svc.Namespace, svc.Name, port), targetNodeID, "forwards", "NodePort")
 			}
 		}

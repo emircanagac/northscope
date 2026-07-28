@@ -1347,7 +1347,7 @@ func TestBuildTopologyIngressStatusCreatesLoadBalancerAndDNS(t *testing.T) {
 	assertEdge(t, snapshot, lbID, ingressID, "fronts")
 }
 
-func TestBuildTopologyNodePortOpensOnNodesAndHostsPods(t *testing.T) {
+func TestBuildTopologyNodePortSummarizesNodeScopeAndHostsPods(t *testing.T) {
 	snapshot := BuildTopologyWithResources(
 		nil,
 		nil,
@@ -1389,7 +1389,65 @@ func TestBuildTopologyNodePortOpensOnNodesAndHostsPods(t *testing.T) {
 
 	assertNode(t, snapshot, nodeIDValue)
 	assertEdge(t, snapshot, nodeIDValue, podID, "hosts")
-	assertEdge(t, snapshot, nodePortID, nodeIDValue, "opens_on")
+	assertNoEdge(t, snapshot, nodePortID, nodeIDValue, "opens_on")
+	nodePort := findNode(t, snapshot, nodePortID)
+	if nodePort.Data.Properties["nodeScope"] != "cluster nodes" {
+		t.Fatalf("expected summarized NodePort node scope, got %#v", nodePort.Data.Properties)
+	}
+}
+
+func TestBuildTopologyShowsUnsupportedIngressResourceBackend(t *testing.T) {
+	apiGroup := "storage.example.io"
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "assets"},
+			Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+				Host: "assets.example.com",
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
+						Path: "/",
+						Backend: networkingv1.IngressBackend{Resource: &corev1.TypedLocalObjectReference{
+							APIGroup: &apiGroup,
+							Kind:     "StorageBucket",
+							Name:     "assets",
+						}},
+					}}},
+				},
+			}}},
+		}},
+		nil,
+		nil,
+		nil,
+	)
+
+	route := findRouteNodeByBackend(t, snapshot, "StorageBucket/assets")
+	if route.Data.Status != "Error" || route.Data.Properties["backendResourceKind"] != "StorageBucket" {
+		t.Fatalf("expected explicit unsupported backend diagnosis, got %#v", route.Data)
+	}
+	assertNoEdge(t, snapshot, route.ID, nodeID(models.NodeKindService, "default", "assets"), "routes")
+}
+
+func TestBuildTopologyAddsIngressTLSMetadataWithoutSecretContents(t *testing.T) {
+	snapshot := BuildTopology(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "secure"},
+			Spec: networkingv1.IngressSpec{TLS: []networkingv1.IngressTLS{
+				{Hosts: []string{"api.example.com", "admin.example.com"}, SecretName: "edge-cert"},
+				{Hosts: []string{"api.example.com"}, SecretName: "api-cert"},
+			}},
+		}},
+		nil,
+		nil,
+		nil,
+	)
+
+	ingress := findNode(t, snapshot, nodeID(models.NodeKindIngress, "default", "secure"))
+	if ingress.Data.Properties["tlsHosts"] != "admin.example.com, api.example.com" {
+		t.Fatalf("unexpected TLS hosts: %#v", ingress.Data.Properties)
+	}
+	if ingress.Data.Properties["tlsSecrets"] != "api-cert, edge-cert" {
+		t.Fatalf("unexpected TLS Secret names: %#v", ingress.Data.Properties)
+	}
 }
 
 func assertNode(t *testing.T, snapshot models.TopologySnapshot, id string) {

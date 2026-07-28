@@ -42,6 +42,10 @@ export type TopologyEdge = Edge<TopologyEdgeData>;
 export interface ClusterInventory {
   ingressClasses: number;
   ingresses: number;
+  gatewayClasses: number;
+  gateways: number;
+  gatewayRoutes: number;
+  f5Resources: number;
   services: number;
   pods: number;
   nodes: number;

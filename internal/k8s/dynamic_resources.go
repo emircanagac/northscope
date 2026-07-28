@@ -42,7 +42,12 @@ var optionalTopologyResources = []optionalResource{
 	{gvr: schema.GroupVersionResource{Group: "cis.f5.com", Version: "v1", Resource: "transportservers"}, scope: "namespace", kind: ExternalKindF5Transport},
 }
 
-func listOptionalExternalResources(ctx context.Context, client dynamic.Interface, availableGVRs map[schema.GroupVersionResource]struct{}) ([]ExternalResource, bool) {
+func listOptionalExternalResources(
+	ctx context.Context,
+	client dynamic.Interface,
+	availableGVRs map[schema.GroupVersionResource]struct{},
+	namespace string,
+) ([]ExternalResource, bool) {
 	if client == nil {
 		return nil, true
 	}
@@ -50,7 +55,7 @@ func listOptionalExternalResources(ctx context.Context, client dynamic.Interface
 	var resources []ExternalResource
 	complete := true
 	for _, item := range preferredOptionalResources(availableGVRs) {
-		list, err := listOptionalResource(ctx, client, item)
+		list, err := listOptionalResource(ctx, client, item, namespace)
 		if err != nil {
 			if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
 				continue
@@ -87,11 +92,11 @@ func preferredOptionalResources(availableGVRs map[schema.GroupVersionResource]st
 	return selected
 }
 
-func listOptionalResource(ctx context.Context, client dynamic.Interface, item optionalResource) (*unstructured.UnstructuredList, error) {
+func listOptionalResource(ctx context.Context, client dynamic.Interface, item optionalResource, namespace string) (*unstructured.UnstructuredList, error) {
 	if item.scope == "cluster" {
 		return client.Resource(item.gvr).List(ctx, metav1.ListOptions{})
 	}
-	return client.Resource(item.gvr).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	return client.Resource(item.gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
 }
 
 func externalResourceFromUnstructured(obj *unstructured.Unstructured, kind ExternalResourceKind, apiVersion string) (ExternalResource, bool) {

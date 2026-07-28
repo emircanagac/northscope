@@ -8,8 +8,51 @@ import (
 	"time"
 
 	"github.com/emircanagac/northscope/internal/models"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestWatcherAppliesNamespaceAndOptionalDiscoveryOptions(t *testing.T) {
+	watcher, err := newWatcherFromClients(
+		fake.NewSimpleClientset(),
+		nil,
+		time.Minute,
+		WatcherOptions{
+			GatewayAPI: false,
+			F5:         true,
+			Namespace:  "apps",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	if watcher.namespace != "apps" {
+		t.Fatalf("expected namespace apps, got %q", watcher.namespace)
+	}
+
+	gatewayRoute := schema.GroupVersionResource{
+		Group:    "gateway.networking.k8s.io",
+		Version:  "v1",
+		Resource: "httproutes",
+	}
+	f5VirtualServer := schema.GroupVersionResource{
+		Group:    "cis.f5.com",
+		Version:  "v1",
+		Resource: "virtualservers",
+	}
+	resources := watcher.preferredEnabledOptionalResources(map[schema.GroupVersionResource]struct{}{
+		gatewayRoute:    {},
+		f5VirtualServer: {},
+	})
+
+	if len(resources) != 1 {
+		t.Fatalf("expected only the F5 resource to remain enabled, got %#v", resources)
+	}
+	if resources[0].gvr != f5VirtualServer {
+		t.Fatalf("expected F5 virtual server, got %s", resources[0].gvr.String())
+	}
+}
 
 func TestWatcherKeepsLastSnapshotWhenBuildFails(t *testing.T) {
 	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)

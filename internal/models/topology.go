@@ -62,6 +62,10 @@ type Edge struct {
 type ClusterInventory struct {
 	IngressClasses int `json:"ingressClasses"`
 	Ingresses      int `json:"ingresses"`
+	GatewayClasses int `json:"gatewayClasses"`
+	Gateways       int `json:"gateways"`
+	GatewayRoutes  int `json:"gatewayRoutes"`
+	F5Resources    int `json:"f5Resources"`
 	Services       int `json:"services"`
 	Pods           int `json:"pods"`
 	Nodes          int `json:"nodes"`

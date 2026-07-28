@@ -11,13 +11,15 @@ import (
 )
 
 type ingressRoute struct {
-	ID          string
-	Host        string
-	Path        string
-	PathType    string
-	ServiceName string
-	ServicePort networkingv1.ServiceBackendPort
-	IsDefault   bool
+	ID           string
+	Host         string
+	Path         string
+	PathType     string
+	ServiceName  string
+	ServicePort  networkingv1.ServiceBackendPort
+	ResourceKind string
+	ResourceName string
+	IsDefault    bool
 }
 
 func (r ingressRoute) Name() string {
@@ -30,7 +32,7 @@ func (r ingressRoute) Name() string {
 		path = "/"
 	}
 	if r.IsDefault {
-		return "default -> " + r.ServiceName
+		return "default -> " + r.BackendLabel()
 	}
 	return host + " " + path
 }
@@ -52,6 +54,13 @@ func (r ingressRoute) ServicePortLabel() string {
 	return "unspecified"
 }
 
+func (r ingressRoute) BackendLabel() string {
+	if r.ResourceKind != "" {
+		return r.ResourceKind + "/" + r.ResourceName
+	}
+	return r.ServiceName + ":" + r.ServicePortLabel()
+}
+
 type routeDiagnosis struct {
 	Status     string
 	Severity   string
@@ -70,6 +79,16 @@ func diagnoseIngressRoute(
 	stats endpointStats,
 ) routeDiagnosis {
 	baseKubectl := fmt.Sprintf("kubectl describe ingress %s -n %s", ingress.Name, ingress.Namespace)
+	if route.ResourceKind != "" {
+		return routeDiagnosis{
+			Status:     "Error",
+			Severity:   "error",
+			Message:    fmt.Sprintf("Ingress backend resource %q is not a Service and cannot be resolved by NorthScope.", route.BackendLabel()),
+			NextStep:   "Verify that the ingress controller supports this backend resource and inspect it separately.",
+			Kubectl:    baseKubectl,
+			Confidence: "Certain",
+		}
+	}
 	if service == nil {
 		return routeDiagnosis{
 			Status:     "Error",

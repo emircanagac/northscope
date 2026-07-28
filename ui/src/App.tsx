@@ -194,15 +194,22 @@ export default function App() {
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
   const topologySummary = useMemo(() => summarizeKinds(nodes), [nodes]);
   const summary = snapshot?.inventory ?? topologySummary;
-  const clusterInventory = useMemo(
-    () =>
-      `${summary.ingressClasses} ingress class${summary.ingressClasses === 1 ? '' : 'es'} · ${summary.ingresses} ingress object${
-        summary.ingresses === 1 ? '' : 's'
-      } · ${summary.services} service${summary.services === 1 ? '' : 's'} · ${summary.pods} pod${summary.pods === 1 ? '' : 's'} · ${
-        summary.nodes
-      } node${summary.nodes === 1 ? '' : 's'}`,
-    [summary],
-  );
+  const clusterInventory = useMemo(() => {
+    const parts = [
+      `${summary.ingressClasses} ingress class${summary.ingressClasses === 1 ? '' : 'es'}`,
+      `${summary.ingresses} ingress object${summary.ingresses === 1 ? '' : 's'}`,
+    ];
+    if ((summary.gatewayClasses ?? 0) > 0) parts.push(`${summary.gatewayClasses} gateway class${summary.gatewayClasses === 1 ? '' : 'es'}`);
+    if ((summary.gateways ?? 0) > 0) parts.push(`${summary.gateways} gateway${summary.gateways === 1 ? '' : 's'}`);
+    if ((summary.gatewayRoutes ?? 0) > 0) parts.push(`${summary.gatewayRoutes} gateway route${summary.gatewayRoutes === 1 ? '' : 's'}`);
+    if ((summary.f5Resources ?? 0) > 0) parts.push(`${summary.f5Resources} F5 resource${summary.f5Resources === 1 ? '' : 's'}`);
+    parts.push(
+      `${summary.services} service${summary.services === 1 ? '' : 's'}`,
+      `${summary.pods} pod${summary.pods === 1 ? '' : 's'}`,
+      `${summary.nodes} node${summary.nodes === 1 ? '' : 's'}`,
+    );
+    return parts.join(' · ');
+  }, [summary]);
 
   const emptyStateTitle = useMemo(() => {
     if (!hasSnapshot) {

@@ -18,6 +18,16 @@ serviceAccount:
 rbac:
   create: true
 
+# Empty watches all namespaces. Set one namespace to reduce the watched and
+# namespaced RBAC surface while retaining cluster-scoped class/node discovery.
+watchNamespace: ""
+
+discovery:
+  gatewayAPI:
+    enabled: true
+  f5:
+    enabled: true
+
 podAnnotations: {}
 
 podSecurityContext:

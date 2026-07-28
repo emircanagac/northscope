@@ -15,24 +15,30 @@ import (
 func ingressRoutes(ingress *networkingv1.Ingress) []ingressRoute {
 	var routes []ingressRoute
 	add := func(host, path, pathType string, backend networkingv1.IngressBackend, isDefault bool) {
-		if backend.Service == nil || backend.Service.Name == "" {
+		if (backend.Service == nil || backend.Service.Name == "") &&
+			(backend.Resource == nil || backend.Resource.Kind == "" || backend.Resource.Name == "") {
 			return
 		}
 		route := ingressRoute{
-			Host:        host,
-			Path:        path,
-			PathType:    pathType,
-			ServiceName: backend.Service.Name,
-			ServicePort: backend.Service.Port,
-			IsDefault:   isDefault,
+			Host:      host,
+			Path:      path,
+			PathType:  pathType,
+			IsDefault: isDefault,
+		}
+		if backend.Service != nil {
+			route.ServiceName = backend.Service.Name
+			route.ServicePort = backend.Service.Port
+		}
+		if backend.Resource != nil {
+			route.ResourceKind = backend.Resource.Kind
+			route.ResourceName = backend.Resource.Name
 		}
 		route.ID = safeID(strings.Join([]string{
 			boolRoutePart(isDefault),
 			host,
 			path,
 			pathType,
-			backend.Service.Name,
-			route.ServicePortLabel(),
+			route.BackendLabel(),
 			strconv.Itoa(len(routes)),
 		}, "|"))
 		routes = append(routes, route)

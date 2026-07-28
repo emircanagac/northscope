@@ -21,6 +21,9 @@ func main() {
 	var (
 		addr       = flag.String("addr", ":8080", "HTTP listen address")
 		kubeconfig = flag.String("kubeconfig", "", "Path to kubeconfig file. Defaults to in-cluster config, then ~/.kube/config.")
+		namespace  = flag.String("namespace", "", "Watch one namespace. Empty watches all namespaces.")
+		gatewayAPI = flag.Bool("gateway-api", true, "Discover Gateway API resources when their CRDs are installed")
+		f5         = flag.Bool("f5", true, "Discover F5 CIS custom resources when their CRDs are installed")
 	)
 	flag.Parse()
 
@@ -36,7 +39,11 @@ func main() {
 		log.Fatalf("load kubernetes config: %v", err)
 	}
 
-	watcher, err := k8s.NewWatcher(config)
+	watcher, err := k8s.NewWatcherWithOptions(config, k8s.WatcherOptions{
+		GatewayAPI: *gatewayAPI,
+		F5:         *f5,
+		Namespace:  *namespace,
+	})
 	if err != nil {
 		log.Fatalf("create kubernetes watcher: %v", err)
 	}

@@ -35,6 +35,9 @@ type Watcher struct {
 	dynamicClient   dynamic.Interface
 	resyncPeriod    time.Duration
 	rebuildDebounce time.Duration
+	gatewayAPI      bool
+	f5              bool
+	namespace       string
 
 	factory               informers.SharedInformerFactory
 	ingressInformer       networkinginformers.IngressInformer
@@ -68,6 +71,16 @@ type Watcher struct {
 	buildSnapshotFunc func() (models.TopologySnapshot, error)
 }
 
+type WatcherOptions struct {
+	GatewayAPI bool
+	F5         bool
+	Namespace  string
+}
+
+func DefaultWatcherOptions() WatcherOptions {
+	return WatcherOptions{GatewayAPI: true, F5: true}
+}
+
 type WatcherMetrics struct {
 	Ready                            bool
 	SnapshotVersion                  int64
@@ -82,6 +95,10 @@ type WatcherMetrics struct {
 }
 
 func NewWatcher(config *rest.Config) (*Watcher, error) {
+	return NewWatcherWithOptions(config, DefaultWatcherOptions())
+}
+
+func NewWatcherWithOptions(config *rest.Config, options WatcherOptions) (*Watcher, error) {
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
@@ -91,7 +108,7 @@ func NewWatcher(config *rest.Config) (*Watcher, error) {
 		return nil, err
 	}
 
-	return NewWatcherFromClients(client, dynamicClient, defaultResyncPeriod)
+	return newWatcherFromClients(client, dynamicClient, defaultResyncPeriod, options)
 }
 
 func NewWatcherFromClient(client kubernetes.Interface, resyncPeriod time.Duration) (*Watcher, error) {
@@ -99,16 +116,32 @@ func NewWatcherFromClient(client kubernetes.Interface, resyncPeriod time.Duratio
 }
 
 func NewWatcherFromClients(client kubernetes.Interface, dynamicClient dynamic.Interface, resyncPeriod time.Duration) (*Watcher, error) {
+	return newWatcherFromClients(client, dynamicClient, resyncPeriod, DefaultWatcherOptions())
+}
+
+func newWatcherFromClients(
+	client kubernetes.Interface,
+	dynamicClient dynamic.Interface,
+	resyncPeriod time.Duration,
+	options WatcherOptions,
+) (*Watcher, error) {
 	if resyncPeriod == 0 {
 		resyncPeriod = defaultResyncPeriod
 	}
 
-	factory := informers.NewSharedInformerFactory(client, resyncPeriod)
+	factoryOptions := []informers.SharedInformerOption{}
+	if options.Namespace != "" {
+		factoryOptions = append(factoryOptions, informers.WithNamespace(options.Namespace))
+	}
+	factory := informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod, factoryOptions...)
 	w := &Watcher{
 		discovery:             client.Discovery(),
 		dynamicClient:         dynamicClient,
 		resyncPeriod:          resyncPeriod,
 		rebuildDebounce:       defaultRebuildDebounce,
+		gatewayAPI:            options.GatewayAPI,
+		f5:                    options.F5,
+		namespace:             options.Namespace,
 		factory:               factory,
 		ingressInformer:       factory.Networking().V1().Ingresses(),
 		ingressClassInformer:  factory.Networking().V1().IngressClasses(),
@@ -376,16 +409,47 @@ func (w *Watcher) buildSnapshot(ctx context.Context) (models.TopologySnapshot, e
 		return models.TopologySnapshot{}, err
 	}
 	externalResources := w.optionalExternalResources(ctx)
+	scoped := scopeTrafficInputs(ingresses, services, pods, nodes, externalResources, endpoints, endpointSlices)
+	gatewayClasses, gateways, gatewayRoutes, f5Resources := externalResourceInventory(externalResources)
 
-	snapshot := BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices)
+	snapshot := BuildTopologyWithResourcesAndEndpoints(
+		ingresses,
+		ingressClasses,
+		scoped.services,
+		scoped.pods,
+		scoped.nodes,
+		externalResources,
+		scoped.endpoints,
+		scoped.endpointSlices,
+	)
 	snapshot.Inventory = models.ClusterInventory{
 		IngressClasses: len(ingressClasses),
 		Ingresses:      len(ingresses),
+		GatewayClasses: gatewayClasses,
+		Gateways:       gateways,
+		GatewayRoutes:  gatewayRoutes,
+		F5Resources:    f5Resources,
 		Services:       len(services),
 		Pods:           len(pods),
 		Nodes:          len(nodes),
 	}
 	return ingressScopedSnapshot(snapshot), nil
+}
+
+func externalResourceInventory(resources []ExternalResource) (gatewayClasses, gateways, gatewayRoutes, f5Resources int) {
+	for _, resource := range resources {
+		switch resource.Kind {
+		case ExternalKindGatewayClass:
+			gatewayClasses++
+		case ExternalKindGateway:
+			gateways++
+		case ExternalKindHTTPRoute, ExternalKindGRPCRoute, ExternalKindTLSRoute, ExternalKindTCPRoute, ExternalKindUDPRoute:
+			gatewayRoutes++
+		case ExternalKindF5IngressLink, ExternalKindF5Virtual, ExternalKindF5Transport:
+			f5Resources++
+		}
+	}
+	return
 }
 
 func (w *Watcher) optionalExternalResources(ctx context.Context) []ExternalResource {
@@ -414,7 +478,7 @@ func (w *Watcher) optionalExternalResources(ctx context.Context) []ExternalResou
 
 	requestCtx, cancel := context.WithTimeout(ctx, optionalResourceRequestTimeout)
 	defer cancel()
-	resources, complete := listOptionalExternalResources(requestCtx, w.dynamicClient, availableGVRs)
+	resources, complete := listOptionalExternalResources(requestCtx, w.dynamicClient, availableGVRs, w.namespace)
 	w.optionalResourceGVRs = availableGVRs
 	if complete || w.optionalResourceCache == nil {
 		w.optionalResourceCache = append([]ExternalResource(nil), resources...)
@@ -452,7 +516,7 @@ func (w *Watcher) availableOptionalResourceGVRs() (map[schema.GroupVersionResour
 	}
 
 	available := make(map[schema.GroupVersionResource]struct{})
-	for _, item := range preferredOptionalResources(served) {
+	for _, item := range w.preferredEnabledOptionalResources(served) {
 		available[item.gvr] = struct{}{}
 	}
 	return available, nil
@@ -476,8 +540,14 @@ func (w *Watcher) startOptionalInformers(ctx context.Context) {
 		UpdateFunc: func(interface{}, interface{}) { w.optionalResourceChanged() },
 		DeleteFunc: func(interface{}) { w.optionalResourceChanged() },
 	}
-	for _, item := range preferredOptionalResources(available) {
-		namespace := metav1.NamespaceAll
+	for _, item := range w.preferredEnabledOptionalResources(available) {
+		namespace := w.namespace
+		if namespace == "" {
+			namespace = metav1.NamespaceAll
+		}
+		if item.scope == "cluster" {
+			namespace = metav1.NamespaceAll
+		}
 		informer := dynamicinformer.NewFilteredDynamicInformer(
 			w.dynamicClient,
 			item.gvr,
@@ -493,6 +563,25 @@ func (w *Watcher) startOptionalInformers(ctx context.Context) {
 		w.optionalInformers = append(w.optionalInformers, informer)
 		go informer.Run(ctx.Done())
 	}
+}
+
+func (w *Watcher) preferredEnabledOptionalResources(available map[schema.GroupVersionResource]struct{}) []optionalResource {
+	resources := preferredOptionalResources(available)
+	filtered := make([]optionalResource, 0, len(resources))
+	for _, item := range resources {
+		switch item.gvr.Group {
+		case "gateway.networking.k8s.io":
+			if !w.gatewayAPI {
+				continue
+			}
+		case "cis.f5.com":
+			if !w.f5 {
+				continue
+			}
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func (w *Watcher) optionalResourceChanged() {

@@ -34,6 +34,24 @@ func (b *topologyBuilder) addIngress(ingress *networkingv1.Ingress) {
 	if hosts := ingressHosts(ingress); len(hosts) > 0 {
 		properties["hosts"] = strings.Join(hosts, ", ")
 	}
+	tlsHosts := map[string]struct{}{}
+	tlsSecrets := map[string]struct{}{}
+	for _, tls := range ingress.Spec.TLS {
+		for _, host := range tls.Hosts {
+			if host != "" {
+				tlsHosts[host] = struct{}{}
+			}
+		}
+		if tls.SecretName != "" {
+			tlsSecrets[tls.SecretName] = struct{}{}
+		}
+	}
+	if hosts := sortedSetValues(tlsHosts); len(hosts) > 0 {
+		properties["tlsHosts"] = strings.Join(hosts, ", ")
+	}
+	if secrets := sortedSetValues(tlsSecrets); len(secrets) > 0 {
+		properties["tlsSecrets"] = strings.Join(secrets, ", ")
+	}
 
 	b.addNode(models.Node{
 		ID:       nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
@@ -51,18 +69,33 @@ func (b *topologyBuilder) addIngress(ingress *networkingv1.Ingress) {
 	})
 }
 
+func sortedSetValues(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
 func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route ingressRoute, diagnosis routeDiagnosis) {
 	properties := map[string]string{
-		"mode":        "configured",
-		"ingress":     displayName(ingress.Namespace, ingress.Name),
-		"backend":     route.ServiceName + ":" + route.ServicePortLabel(),
-		"service":     route.ServiceName,
-		"servicePort": route.ServicePortLabel(),
-		"diagnosis":   diagnosis.Message,
-		"nextStep":    diagnosis.NextStep,
-		"kubectl":     diagnosis.Kubectl,
-		"confidence":  diagnosis.Confidence,
-		"severity":    diagnosis.Severity,
+		"mode":       "configured",
+		"ingress":    displayName(ingress.Namespace, ingress.Name),
+		"backend":    route.BackendLabel(),
+		"diagnosis":  diagnosis.Message,
+		"nextStep":   diagnosis.NextStep,
+		"kubectl":    diagnosis.Kubectl,
+		"confidence": diagnosis.Confidence,
+		"severity":   diagnosis.Severity,
+	}
+	if route.ServiceName != "" {
+		properties["service"] = route.ServiceName
+		properties["servicePort"] = route.ServicePortLabel()
+	}
+	if route.ResourceKind != "" {
+		properties["backendResourceKind"] = route.ResourceKind
+		properties["backendResourceName"] = route.ResourceName
 	}
 	if route.Host != "" {
 		properties["host"] = route.Host
@@ -178,7 +211,13 @@ func (b *topologyBuilder) addNodePort(service *corev1.Service, port corev1.Servi
 	properties := map[string]string{
 		"service":     displayName(service.Namespace, service.Name),
 		"servicePort": strconv.Itoa(int(port.Port)),
+		"nodeScope":   "cluster nodes",
 	}
+	trafficPolicy := service.Spec.ExternalTrafficPolicy
+	if trafficPolicy == "" {
+		trafficPolicy = corev1.ServiceExternalTrafficPolicyCluster
+	}
+	properties["externalTrafficPolicy"] = string(trafficPolicy)
 	if port.NodePort != 0 {
 		properties["nodePort"] = strconv.Itoa(int(port.NodePort))
 	}

@@ -8,6 +8,9 @@ export interface KindSummary {
   gateways: number;
   ingressClasses: number;
   ingresses: number;
+  gatewayClasses: number;
+  gatewayRoutes: number;
+  f5Resources: number;
   routes: number;
   services: number;
   pods: number;
@@ -132,6 +135,8 @@ export function summarizeKinds(nodes: TopologyNode[]): KindSummary {
       if (kind === 'controller') summary.ingressClasses += 1;
       if (kind === 'ingress') summary.ingresses += 1;
       if (kind === 'route') summary.routes += 1;
+      if (kind === 'route' && node.data.properties?.provider === 'Gateway API') summary.gatewayRoutes += 1;
+      if (kind === 'loadbalancer' && node.data.properties?.provider === 'F5') summary.f5Resources += 1;
       if (kind === 'service') summary.services += 1;
       if (kind === 'pod') summary.pods += 1;
       return summary;
@@ -144,6 +149,9 @@ export function summarizeKinds(nodes: TopologyNode[]): KindSummary {
       gateways: 0,
       ingressClasses: 0,
       ingresses: 0,
+      gatewayClasses: 0,
+      gatewayRoutes: 0,
+      f5Resources: 0,
       routes: 0,
       services: 0,
       pods: 0,
