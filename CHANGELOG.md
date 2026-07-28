@@ -6,6 +6,10 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.5 - 2026-07-28
+
 - Added first-class Gateway API and F5 CIS route roots with live watches, preferred served-version discovery, parent/listener status, and ReferenceGrant-aware cross-namespace backends.
 - Corrected explicit and default IngressClass ownership and replaced reachability-style labels with configuration-derived status terminology.
 - Hardened WebSocket heartbeats, monotonic subscriptions, stale snapshot rejection, and directional server-side topology scoping.

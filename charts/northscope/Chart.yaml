@@ -3,8 +3,8 @@ name: northscope
 description: Read-only Kubernetes north-south traffic topology debugger
 type: application
 kubeVersion: ">=1.30.0-0"
-version: 0.1.4
-appVersion: "0.1.4"
+version: 0.1.5
+appVersion: "0.1.5"
 keywords:
   - kubernetes
   - ingress
