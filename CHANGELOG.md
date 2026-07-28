@@ -16,6 +16,7 @@ No unreleased changes.
 - Reduced large-cluster graph work by limiting builder inputs to traffic-related resources and indexing frontend edge lookups.
 - Added namespace-scoped watch/RBAC options, optional Gateway/F5 discovery switches, Kubernetes 1.30 compatibility metadata, and complete watch-scope inventory counters.
 - Added unsupported Ingress resource-backend diagnostics and TLS metadata without granting Secret access.
+- Kept legacy Endpoints topology fallback while replacing repeated Kubernetes 1.33+ deprecation warnings with one compatibility notice; EndpointSlice remains preferred.
 - Added runtime container smoke tests, vulnerability scanning, dependency review, action/image digest pinning, multi-architecture releases, SBOM, provenance attestations, and Helm package checksums.
 - Updated Go to 1.26.5 and patched vulnerable `x/net` and `x/text` dependencies.
 
