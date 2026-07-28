@@ -311,7 +311,11 @@ jobs:
           mkdir -p .helm-repo
           helm lint charts/northscope
           helm package charts/northscope --destination .helm-repo
-          sha256sum .helm-repo/northscope-*.tgz > ".helm-repo/northscope-${GITHUB_REF_NAME#v}.tgz.sha256"
+          (
+            cd .helm-repo
+            sha256sum "northscope-${GITHUB_REF_NAME#v}.tgz" \
+              > "northscope-${GITHUB_REF_NAME#v}.tgz.sha256"
+          )
 
       - name: Merge existing chart index
         run: |
@@ -389,11 +393,13 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
             gh release edit "$GITHUB_REF_NAME" \
               --title "NorthScope $GITHUB_REF_NAME" \
-              --notes "Versioned NorthScope container image and Helm chart release."
+              --notes "Versioned NorthScope container image and Helm chart release." \
+              --latest
           else
             gh release create "$GITHUB_REF_NAME" \
               "${assets[@]}" \
               --verify-tag \
               --title "NorthScope $GITHUB_REF_NAME" \
-              --notes "Versioned NorthScope container image and Helm chart release."
+              --notes "Versioned NorthScope container image and Helm chart release." \
+              --latest
           fi
