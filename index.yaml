@@ -3,9 +3,9 @@ entries:
   northscope:
   - apiVersion: v2
     appVersion: 0.1.5
-    created: "2026-07-28T19:00:33.827362947Z"
+    created: "2026-07-28T19:12:59.410251419Z"
     description: Read-only Kubernetes north-south traffic topology debugger
-    digest: 552df6af485f91f4aace72fc74c6e6ac7e4fbec1295fbeda05cf3f548e004c60
+    digest: 9ad913d2436bdd89517d8898007bf64fa01d862eb94cfdc6248e3dacd76348d4
     home: https://github.com/emircanagac/northscope
     keywords:
     - kubernetes
@@ -86,4 +86,4 @@ entries:
     urls:
     - https://emircanagac.github.io/northscope/northscope-0.1.2.tgz
     version: 0.1.2
-generated: "2026-07-28T19:00:33.826725399Z"
+generated: "2026-07-28T19:12:59.409627886Z"
