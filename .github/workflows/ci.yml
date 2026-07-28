@@ -376,13 +376,24 @@ jobs:
           keep_files: true
           enable_jekyll: false
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            .helm-repo/northscope-*.tgz \
-            .helm-repo/northscope-*.tgz.sha256 \
-            --verify-tag \
-            --title "NorthScope $GITHUB_REF_NAME" \
-            --notes "Versioned NorthScope container image and Helm chart release."
+          assets=(
+            .helm-repo/northscope-*.tgz
+            .helm-repo/northscope-*.tgz.sha256
+          )
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "NorthScope $GITHUB_REF_NAME" \
+              --notes "Versioned NorthScope container image and Helm chart release."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "${assets[@]}" \
+              --verify-tag \
+              --title "NorthScope $GITHUB_REF_NAME" \
+              --notes "Versioned NorthScope container image and Helm chart release."
+          fi
