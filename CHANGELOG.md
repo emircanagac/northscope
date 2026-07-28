@@ -6,7 +6,14 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
-No unreleased changes.
+- Added first-class Gateway API and F5 CIS route roots with live watches, preferred served-version discovery, parent/listener status, and ReferenceGrant-aware cross-namespace backends.
+- Corrected explicit and default IngressClass ownership and replaced reachability-style labels with configuration-derived status terminology.
+- Hardened WebSocket heartbeats, monotonic subscriptions, stale snapshot rejection, and directional server-side topology scoping.
+- Reduced large-cluster graph work by limiting builder inputs to traffic-related resources and indexing frontend edge lookups.
+- Added namespace-scoped watch/RBAC options, optional Gateway/F5 discovery switches, Kubernetes 1.30 compatibility metadata, and complete watch-scope inventory counters.
+- Added unsupported Ingress resource-backend diagnostics and TLS metadata without granting Secret access.
+- Added runtime container smoke tests, vulnerability scanning, dependency review, action/image digest pinning, multi-architecture releases, SBOM, provenance attestations, and Helm package checksums.
+- Updated Go to 1.26.5 and patched vulnerable `x/net` and `x/text` dependencies.
 
 ## 0.1.4 - 2026-07-16
 
@@ -37,7 +44,7 @@ No unreleased changes.
 - Added regression coverage for common nginx, Traefik, HAProxy, and F5-related topology paths plus missing Service and zero-ready Pod diagnostics.
 - Added UI smoke coverage for All namespaces, route search, host route selection, and Simple/Expanded layout mode.
 - Improved dense route list and narrow-sidebar behavior for long ingress, host, and backend labels.
-- RBAC was tightened by removing unused core Endpoints permissions, and the security policy now documents the exact read-only permission surface.
+- The security policy documents the exact read-only permission surface, including legacy core Endpoints fallback.
 - Helm chart now supports an optional PodDisruptionBudget for multi-replica installations.
 - Helm chart now supports an optional NetworkPolicy for production installations.
 - Release workflow now publishes versioned container images and Helm charts from semver tags instead of a mutable `latest` image.

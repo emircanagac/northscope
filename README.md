@@ -1,20 +1,20 @@
 # NorthScope
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Go](https://img.shields.io/badge/go-1.26+-00ADD8.svg)
+![Go](https://img.shields.io/badge/go-1.26.5+-00ADD8.svg)
 ![Build Status](https://github.com/emircanagac/northscope/actions/workflows/ci.yml/badge.svg)
 
-**NorthScope is a lightweight, read-only Kubernetes Ingress topology debugger.**
+**NorthScope is a lightweight, read-only Kubernetes north-south traffic topology debugger.**
 
-NorthScope helps platform, SRE, DevOps, and application teams understand north-south traffic paths without changing the cluster. It watches Kubernetes API resources with read-only access, groups routes by Ingress object, and visualizes the path from external entry to controller, Ingress, Service, and backend Pods.
+NorthScope helps platform, SRE, DevOps, and application teams understand configured traffic paths without changing the cluster. It watches Kubernetes API resources with read-only access and visualizes Ingress, Gateway API, and F5 CIS roots through Services, endpoints, Pods, and Nodes.
 
 ![NorthScope simple topology view](docs/assets/northscope-simple-topology.gif)
 
 ## Overview
 
-Ingress debugging often means stitching together several commands:
+North-south traffic debugging often means stitching together several commands:
 
-- which controller owns this Ingress?
+- which controller or Gateway owns this route?
 - which host and path matched?
 - which Service and port does it route to?
 - are there Ready Pods or usable endpoints?
@@ -23,7 +23,7 @@ Ingress debugging often means stitching together several commands:
 NorthScope turns that configured traffic model into a UI. The default view stays intentionally simple:
 
 ```text
-F5 / LB -> NodePort if present -> Controller -> Ingress -> Service -> Pod summary
+F5 / LB -> NodePort if present -> Controller / Gateway -> Route -> Service -> Pod summary
 ```
 
 Expanded mode adds route, DNS/host, individual Pod, Node, EndpointSlice, and legacy Endpoint context for deeper debugging.
@@ -31,14 +31,15 @@ Expanded mode adds route, DNS/host, individual Pod, Node, EndpointSlice, and leg
 ## Features
 
 - Read-only Kubernetes topology discovery
-- Namespace-aware Ingress route browser
+- Namespace-aware traffic route browser
 - Ingress object -> host -> path grouping
+- First-class Gateway API and F5 CIS route roots when their CRDs are installed
 - Simple and Expanded topology modes
 - Route diagnostics for missing Services, missing ports, selector mismatches, no Ready Pods, missing EndpointSlice/Endpoints data, and unusable endpoints
 - EndpointSlice-aware backend checks, including selector-less Services and legacy Endpoints fallback
-- Optional Gateway API and F5 CIS discovery when those CRDs are installed
+- ReferenceGrant-aware cross-namespace Gateway API backends
 - Coalesced Kubernetes event processing to avoid rebuild storms
-- Ingress-scoped WebSocket snapshots with cluster-wide inventory counts
+- Traffic-root-scoped WebSocket snapshots with complete inventory counts for the configured watch scope
 - Real-time updates over WebSocket, with unchanged snapshots suppressed
 - Prometheus-compatible `/metrics` endpoint for watcher health and snapshot build status
 - Single Go binary with embedded React UI
@@ -50,7 +51,7 @@ NorthScope does not require eBPF, DaemonSets, sidecars, service mesh dependencie
 
 Prerequisites:
 
-- Kubernetes cluster
+- Kubernetes 1.30 or newer
 - Helm 3
 
 Add the Helm repository:
@@ -120,7 +121,7 @@ Kubernetes API
           |
 Debounced Topology Builder
           |
-Ingress-scoped Snapshot + Cluster Inventory
+Traffic-root-scoped Snapshot + Watch-scope Inventory
           |
 Go HTTP + WebSocket Server
           |
@@ -128,6 +129,19 @@ Embedded React Flow UI
 ```
 
 The frontend is compiled with Vite and embedded into the Go backend using `//go:embed`, so production deployment ships as one binary inside one container.
+
+## Support And Status Semantics
+
+| Source | Supported API surface |
+| --- | --- |
+| Kubernetes Ingress | `networking.k8s.io/v1` Ingress and IngressClass |
+| Gateway API | Served `v1`, `v1beta1`, and supported `v1alpha2` Gateway, route, and ReferenceGrant resources |
+| F5 CIS | `cis.f5.com/v1` VirtualServer, TransportServer, and IngressLink |
+| Service backends | ClusterIP, NodePort, LoadBalancer, ExternalName, EndpointSlice, and legacy Endpoints |
+
+NorthScope reports the state represented by Kubernetes API objects. Labels such as `Configured`, `Backends ready`, and `Error` are configuration-derived diagnostics, not active network probes. NorthScope does not send requests through application routes, inspect controller logs, or claim that an external F5/LB is reachable.
+
+Gateway API and F5 discovery are enabled by default but only start when their API resources are served. They can be disabled with `discovery.gatewayAPI.enabled=false` or `discovery.f5.enabled=false`. Set `watchNamespace` to one namespace when cluster-wide route discovery is not required; namespaced RBAC and inventory are then limited to that namespace while Node and class metadata remain cluster-scoped.
 
 ## Security
 
@@ -141,7 +155,7 @@ It does not read Secrets, ConfigMaps, Pod logs, or Events. It does not create, p
 
 ## Project Status
 
-NorthScope is in pre-beta validation. The core Ingress topology workflow is usable, but the project still needs more real-cluster screenshots, installation feedback, and scenario testing before a beta release.
+NorthScope is in pre-beta validation. Ingress, Gateway API, and F5 CIS topology workflows are usable, but the project still needs broader real-cluster compatibility, scale, and installation feedback before a beta release.
 
 Recommended validation scenarios:
 
@@ -151,6 +165,8 @@ Recommended validation scenarios:
 - NodePort and LoadBalancer ingress controller Services
 - selector-less Services with manually managed EndpointSlices or legacy Endpoints
 - missing backend Service, missing Service port, and zero Ready Pods
+- Gateway API cross-namespace backends with and without a ReferenceGrant
+- F5 CIS VirtualServer, TransportServer, and IngressLink resources
 
 ## Development
 
@@ -163,6 +179,7 @@ cmd/northscope/      Go binary entrypoint
 internal/k8s/        Kubernetes watchers, discovery, and topology building
 internal/models/     Shared API and topology models
 internal/server/     HTTP server, health checks, and WebSocket stream
+hack/                Runtime image smoke-test helpers
 ui/                  React UI embedded into the Go binary
 ```
 
@@ -185,7 +202,7 @@ IMAGE=ghcr.io/emircanagac/northscope:dev make docker
 KUBECONFIG=/path/to/kubeconfig make run
 ```
 
-Release tags publish versioned artifacts. Before tagging a release, keep `charts/northscope/Chart.yaml`, `charts/northscope/values.yaml`, and `CHANGELOG.md` aligned, then push a semver tag such as `v0.1.2`. The release workflows publish `ghcr.io/emircanagac/northscope:0.1.2`, package the Helm chart, update the GitHub Pages chart repository, and create a GitHub release. NorthScope does not publish a mutable `latest` image tag.
+Release tags publish versioned, multi-architecture images with SBOM and provenance attestations. Before tagging a release, keep `charts/northscope/Chart.yaml`, `charts/northscope/values.yaml`, and `CHANGELOG.md` aligned, then push a semver tag such as `v0.1.5`. The release workflow publishes the image, packages the Helm chart with a SHA-256 checksum, updates the GitHub Pages chart repository, and creates a GitHub release. NorthScope does not publish a mutable `latest` image tag.
 
 ## Community
 

@@ -4,7 +4,7 @@ NorthScope is a read-only Kubernetes topology debugger. Security is especially i
 
 ## Supported Versions
 
-NorthScope is currently pre-beta. Security fixes target the `main` branch and the latest published container image.
+NorthScope is currently pre-beta and requires Kubernetes 1.30 or newer. Security fixes target the `main` branch and the latest published container image.
 
 ## Reporting a Vulnerability
 
@@ -33,17 +33,20 @@ Changes that weaken this model require explicit maintainer review.
 
 ## Kubernetes Permissions
 
-The default Helm chart creates a ClusterRole with read-only permissions only. NorthScope needs cluster-wide reads because ingress traffic paths commonly cross namespaces and node placement is part of the topology.
+The default Helm chart creates read-only cluster-wide permissions because traffic paths commonly cross namespaces and Node placement is part of the topology. Set `watchNamespace` to use a namespaced Role for namespaced resources while retaining a small ClusterRole for Nodes and class metadata.
 
 | API group | Resources | Purpose |
 | --- | --- | --- |
-| core | namespaces, nodes, pods, services, endpoints | Namespace filtering, backend Pod readiness, Service routing, legacy Endpoints fallback, and Node placement |
+| core | nodes | Backend Node placement |
+| core | pods, services, endpoints | Backend Pod readiness, Service routing, and legacy Endpoints fallback |
 | discovery.k8s.io | endpointslices | EndpointSlice and selector-less Service resolution |
 | networking.k8s.io | ingressclasses, ingresses | Ingress ownership, hosts, paths, and controller mapping |
-| gateway.networking.k8s.io | gatewayclasses, gateways, grpcroutes, httproutes, tcproutes, tlsroutes, udproutes | Optional Gateway API topology when the CRDs are installed |
+| gateway.networking.k8s.io | gatewayclasses, gateways, grpcroutes, httproutes, tcproutes, tlsroutes, udproutes, referencegrants | Optional Gateway API topology and cross-namespace backend authorization when the CRDs are installed |
 | cis.f5.com | ingresslinks, virtualservers, transportservers | Optional F5 CIS topology when the CRDs are installed |
 
 The chart does not grant access to Secrets, ConfigMaps, Events, Pod logs, Pod exec, or resource mutation verbs such as `create`, `update`, `patch`, or `delete`.
+
+Gateway API and F5 discovery can be disabled independently. Their optional RBAC rules and runtime watches are omitted when disabled.
 
 If you disable chart-managed RBAC with `rbac.create=false`, provide an equivalent read-only role before starting NorthScope.
 
@@ -58,9 +61,11 @@ NorthScope can display internal topology metadata, including:
 - EndpointSlice and legacy Endpoints addresses, including external endpoint IPs for selector-less Services
 - Gateway API and F5 CIS object names and selected routing fields when those CRDs are present
 
-Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. Cluster inventory counters remain cluster-wide and can reveal the number of IngressClasses, Ingress objects, Services, Pods, and Nodes.
+Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. In default mode, inventory counters remain cluster-wide. With `watchNamespace` set, namespaced counters and routes are limited to that namespace while Node and class metadata remain cluster-scoped.
 
 NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, and websocket clients. Keep metrics access behind the same trusted boundary as the UI.
+
+Route health labels are derived from Kubernetes object status, backend references, ports, readiness, and endpoint data. They are not active network probes and must not be treated as proof that an application or external load balancer is reachable.
 
 Run NorthScope behind trusted internal access controls. If exposed through Ingress, configure TLS and authentication at the ingress controller, identity proxy, or platform edge. See [Production Access](docs/production-access.md) for examples.
 
@@ -73,3 +78,5 @@ Recommended production settings:
 - enable `networkPolicy` where your CNI enforces NetworkPolicy
 - enable `podDisruptionBudget` when running more than one replica
 - keep `securityContext` and `podSecurityContext` hardened
+- pin chart versions for production changes and verify the chart checksum from the GitHub release
+- verify the published container provenance attestation before promotion

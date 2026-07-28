@@ -6,7 +6,7 @@ Thanks for considering a contribution. NorthScope is pre-beta, so the most valua
 
 - Report a topology bug with a minimal Kubernetes example.
 - Share screenshots or GIFs from real clusters.
-- Add tests for Ingress, Service, EndpointSlice, and controller edge cases.
+- Add tests for Ingress, Gateway API, F5 CIS, Service, endpoint, and controller edge cases.
 - Improve Helm chart defaults and installation docs.
 - Improve the UI when a topology is large, missing data, or unhealthy.
 

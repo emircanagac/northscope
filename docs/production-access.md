@@ -83,6 +83,32 @@ networkPolicy:
 
 By default, the policy allows inbound traffic only to NorthScope's HTTP port and leaves egress unrestricted so the watcher can continue reading the Kubernetes API. Tighten `networkPolicy.ingress.from` and `networkPolicy.egress.rules` for your cluster.
 
+## Limit The Watch Scope
+
+Cluster-wide discovery is the default. If operators only need one application namespace, reduce the namespaced watch and RBAC surface:
+
+```yaml
+watchNamespace: apps
+
+discovery:
+  gatewayAPI:
+    enabled: true
+  f5:
+    enabled: false
+```
+
+This creates a Role and RoleBinding in `apps` for namespaced traffic resources. NorthScope retains read-only cluster permissions for Nodes, IngressClasses, and GatewayClasses because those resources are cluster-scoped. Disabling an optional discovery provider also removes its optional runtime watches and RBAC rules.
+
+## Capacity Guidance
+
+The chart defaults are a starting point, not a universal production sizing target. Watch `northscope_snapshot_nodes`, `northscope_snapshot_edges`, `northscope_snapshot_build_duration_seconds`, process CPU, and memory under your real route count.
+
+- Prefer `watchNamespace` when one team or application boundary is sufficient.
+- Increase CPU and memory requests before raising limits on large clusters.
+- Keep event coalescing enabled; unchanged snapshots are not sent to browsers.
+- Each replica maintains its own informer cache and WebSocket clients. Additional replicas improve availability but also duplicate Kubernetes API watch and snapshot-build work.
+- NorthScope is pre-beta and does not yet publish a certified maximum cluster size. Validate representative route and endpoint counts before production rollout.
+
 ## Operational Notes
 
 - Use HTTPS for browser access.
@@ -90,3 +116,4 @@ By default, the policy allows inbound traffic only to NorthScope's HTTP port and
 - Keep NorthScope internal unless you have a deliberate public access control layer.
 - Review `SECURITY.md` before enabling access for a production cluster.
 - Prefer version-pinned installs for production change control.
+- NorthScope status labels are configuration-derived diagnostics, not active reachability checks.

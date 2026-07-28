@@ -24,17 +24,24 @@ NorthScope ready: snapshot v1, ... nodes, ... edges
 
 If `/readyz` returns `503`, the watcher has not generated the first topology snapshot yet. Check RBAC and API connectivity.
 
-## No Ingress Routes Are Listed
+## No Traffic Routes Are Listed
 
-Verify that Ingress resources exist and that NorthScope can read them:
+Verify that traffic resources exist and that NorthScope can read them:
 
 ```bash
 kubectl get ingress -A
 kubectl auth can-i list ingresses.networking.k8s.io --as=system:serviceaccount:northscope:northscope -A
 kubectl auth can-i list ingressclasses.networking.k8s.io --as=system:serviceaccount:northscope:northscope
+kubectl get httproute,gateway -A
 ```
 
-NorthScope defaults to **All namespaces**. If a namespace filter is selected, clear it and search again by host, ingress name, path, or Service.
+NorthScope defaults to **All namespaces**. If a UI namespace filter is selected, clear it and search again by host, route name, path, or Service.
+
+The Helm `watchNamespace` value is a server-side boundary. Routes outside that namespace are not watched and cannot be restored with the UI filter. Inspect the installed value with:
+
+```bash
+helm get values northscope -n northscope
+```
 
 ## Routes Show Missing Service Or Missing Port
 
@@ -69,15 +76,32 @@ kubectl get ingressclass
 kubectl get svc -A | grep -Ei 'ingress|controller|nginx|traefik|haproxy'
 ```
 
-If several controllers are installed, check that every Ingress has the intended `ingressClassName`.
+If several controllers are installed, check that every Ingress has the intended `ingressClassName`. An Ingress without an explicit class is attached only when exactly one IngressClass is marked as the default; NorthScope does not guess ownership from an arbitrary NodePort Service.
 
 ## Optional Gateway API Or F5 Objects Are Missing
 
-Gateway API and F5 CIS resources are optional. NorthScope only queries those resources when their CRDs are installed and discoverable.
+Gateway API and F5 CIS resources are optional. NorthScope only watches those resources when their CRDs are installed, discoverable, and enabled in Helm values.
 
 ```bash
 kubectl get crd | grep -E 'gateway.networking.k8s.io|cis.f5.com'
+helm get values northscope -n northscope
 ```
+
+For a Gateway API backend in another namespace, verify that the backend namespace contains a matching ReferenceGrant. NorthScope intentionally reports and disconnects cross-namespace references that are not granted.
+
+## A Route Looks Healthy But Requests Fail
+
+NorthScope does not perform active network requests. `Configured`, `Backends ready`, and `Error` are derived from Kubernetes object status, references, Service ports, Pod readiness, and endpoint data.
+
+If the configured graph is complete but requests still fail, inspect the data plane:
+
+```bash
+kubectl describe ingress -n <namespace> <ingress>
+kubectl describe gateway -n <namespace> <gateway>
+kubectl logs -n <controller-namespace> deploy/<controller>
+```
+
+Also check external load balancer health, TLS, DNS, NetworkPolicy, firewall rules, and application logs.
 
 ## Metrics
 
@@ -103,4 +127,4 @@ Useful metrics:
 
 If `northscope_snapshot_build_errors_total` increases, check NorthScope logs for `build topology snapshot failed`.
 
-`northscope_snapshot_unchanged_total` increases when informer resyncs or resource events produce the same Ingress-scoped topology. Those builds are intentionally not republished to WebSocket clients.
+`northscope_snapshot_unchanged_total` increases when informer resyncs or resource events produce the same traffic-root-scoped topology. Those builds are intentionally not republished to WebSocket clients.

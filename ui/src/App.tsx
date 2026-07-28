@@ -306,7 +306,7 @@ export default function App() {
         <div className="flex min-h-10 flex-wrap items-center gap-3">
           <div className="mr-2 min-w-[210px]">
             <div className="text-sm font-black tracking-tight">NorthScope</div>
-            <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Kubernetes ingress traffic path debugger</div>
+            <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Kubernetes traffic topology debugger</div>
           </div>
           <div className="hidden min-w-0 flex-1 justify-end xl:flex">
             <div className="max-w-full truncate rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
