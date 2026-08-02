@@ -1,33 +1,25 @@
 version: 2
+
+multi-ecosystem-groups:
+  application-dependencies:
+    schedule:
+      interval: "monthly"
+  build-dependencies:
+    schedule:
+      interval: "monthly"
+
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
-    schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 1
-    groups:
-      kubernetes-libraries:
-        patterns:
-          - "k8s.io/*"
-      go-minor-and-patch:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "application-dependencies"
 
   - package-ecosystem: "npm"
     directory: "/ui"
-    schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 1
-    groups:
-      npm-minor-and-patch:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "application-dependencies"
     ignore:
       # Keep the Playwright package aligned with the CI container image.
       - dependency-name: "@playwright/test"
@@ -38,20 +30,12 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 1
-    groups:
-      github-actions:
-        patterns:
-          - "*"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "build-dependencies"
 
   - package-ecosystem: "docker"
     directory: "/"
-    schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 1
-    groups:
-      docker-base-images:
-        patterns:
-          - "*"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "build-dependencies"
