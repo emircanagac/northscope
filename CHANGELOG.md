@@ -8,6 +8,13 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 No unreleased changes.
 
+## 0.1.6 - 2026-08-04
+
+- Added runtime build-version reporting through the header, `/api/version`, startup logs, and the `-version` command-line flag.
+- Embedded the release tag in published container binaries and validated version reporting in the runtime container smoke test.
+- Consolidated monthly Dependabot maintenance into application and build multi-ecosystem pull requests.
+- Updated Kubernetes, UI, container base image, and GitHub Actions dependencies.
+
 ## 0.1.5 - 2026-07-28
 
 - Added first-class Gateway API and F5 CIS route roots with live watches, preferred served-version discovery, parent/listener status, and ReferenceGrant-aware cross-namespace backends.

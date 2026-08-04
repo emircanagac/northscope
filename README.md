@@ -202,7 +202,7 @@ IMAGE=ghcr.io/emircanagac/northscope:dev make docker
 KUBECONFIG=/path/to/kubeconfig make run
 ```
 
-Release tags publish versioned, multi-architecture images with SBOM and provenance attestations. Before tagging a release, keep `charts/northscope/Chart.yaml`, `charts/northscope/values.yaml`, and `CHANGELOG.md` aligned, then push a semver tag such as `v0.1.5`. The release workflow publishes the image, packages the Helm chart with a SHA-256 checksum, updates the GitHub Pages chart repository, and creates a GitHub release. NorthScope does not publish a mutable `latest` image tag.
+Release tags publish versioned, multi-architecture images with SBOM and provenance attestations. Before tagging a release, keep `charts/northscope/Chart.yaml`, `charts/northscope/values.yaml`, and `CHANGELOG.md` aligned, then push a semver tag such as `v0.1.6`. The release workflow publishes the image, packages the Helm chart with a SHA-256 checksum, updates the GitHub Pages chart repository, and creates a GitHub release. NorthScope does not publish a mutable `latest` image tag.
 
 ## Community
 
