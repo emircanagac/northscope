@@ -18,6 +18,7 @@ import {
   type TopologyEdge,
   type TopologyNode,
 } from './hooks/useTopologyStream';
+import { useAppVersion } from './hooks/useAppVersion';
 import { summarizeKinds } from './topologyView';
 import {
   filterEdgesForNodes,
@@ -80,6 +81,7 @@ function statusLabel(status: string, hasSnapshot: boolean): string {
 
 export default function App() {
   const { nodes, edges, snapshot, status, error } = useTopologyStream();
+  const appVersion = useAppVersion();
   const [namespace, setNamespace] = useState('');
   const [namespaceQuery, setNamespaceQuery] = useState('');
   const [namespacePickerOpen, setNamespacePickerOpen] = useState(false);
@@ -305,7 +307,17 @@ export default function App() {
       <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:shadow-none">
         <div className="flex min-h-10 flex-wrap items-center gap-3">
           <div className="mr-2 min-w-[210px]">
-            <div className="text-sm font-black tracking-tight">NorthScope</div>
+            <div className="flex items-center gap-1.5">
+              <div className="text-sm font-black tracking-tight">NorthScope</div>
+              {appVersion ? (
+                <span
+                  data-testid="app-version"
+                  className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400"
+                >
+                  {appVersion}
+                </span>
+              ) : null}
+            </div>
             <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Kubernetes traffic topology debugger</div>
           </div>
           <div className="hidden min-w-0 flex-1 justify-end xl:flex">

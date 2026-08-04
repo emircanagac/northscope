@@ -20,6 +20,7 @@ type Server struct {
 	httpServer *http.Server
 	watcher    *k8s.Watcher
 	staticFS   fs.FS
+	version    string
 	upgrader   websocket.Upgrader
 }
 
@@ -29,10 +30,16 @@ const (
 	websocketPingPeriod = websocketPongWait * 9 / 10
 )
 
-func New(addr string, watcher *k8s.Watcher, staticFS fs.FS) *Server {
+func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string) *Server {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "dev"
+	}
+
 	s := &Server{
 		watcher:  watcher,
 		staticFS: staticFS,
+		version:  version,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: sameOrigin,
 		},
@@ -42,6 +49,7 @@ func New(addr string, watcher *k8s.Watcher, staticFS fs.FS) *Server {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
+	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/topology", s.handleTopology)
 	mux.HandleFunc("/ws", s.handleTopologyStream)
 	mux.HandleFunc("/ws/topology", s.handleTopologyStream)
@@ -93,6 +101,14 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.watcher.Latest())
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Version string `json:"version"`
+	}{Version: s.version})
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {

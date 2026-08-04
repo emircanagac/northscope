@@ -186,11 +186,13 @@ jobs:
           push: false
           load: true
           tags: northscope:test
+          build-args: |
+            VERSION=ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Run runtime smoke test
-        run: bash hack/container-smoke.sh northscope:test
+        run: bash hack/container-smoke.sh northscope:test ci
 
       - name: Scan runtime image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -252,6 +254,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha

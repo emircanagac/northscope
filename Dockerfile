@@ -36,10 +36,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM verify AS build
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION=dev
 ENV CGO_ENABLED=0
 RUN --mount=type=cache,target=/go/pkg/mod \
   --mount=type=cache,target=/root/.cache/go-build \
-  GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/northscope ./cmd/northscope
+  GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+  -ldflags="-s -w -X github.com/emircanagac/northscope/internal/buildinfo.Version=${VERSION}" \
+  -o /out/northscope ./cmd/northscope
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS runtime
 WORKDIR /

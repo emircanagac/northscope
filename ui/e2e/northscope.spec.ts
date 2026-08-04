@@ -273,11 +273,23 @@ async function openSelectedTopology(
   host = 'shop.example.com',
 ): Promise<void> {
   await installFakeTopologyStream(page, topologySnapshot);
+  await page.route('**/api/version', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ version: 'v9.8.7' }),
+    });
+  });
   await page.goto('/');
   await expect(page.getByTestId('stream-status')).toHaveText('Live config');
   await page.getByTestId('host-route').filter({ hasText: host }).click();
   await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
 }
+
+test('header displays the runtime application version', async ({ page }) => {
+  await openSelectedTopology(page);
+  await expect(page.getByTestId('app-version')).toHaveText('v9.8.7');
+});
 
 test('Gateway API resources are selectable traffic roots', async ({ page }) => {
   await openSelectedTopology(page, gatewaySnapshot, 'gateway.example.com');

@@ -59,7 +59,7 @@ func TestMetricsEndpointExposesPrometheusText(t *testing.T) {
 	}
 	server := New(":0", watcher, fstest.MapFS{
 		"index.html": {Data: []byte("ok")},
-	})
+	}, "test")
 
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	recorder := httptest.NewRecorder()
@@ -92,6 +92,40 @@ func TestMetricsEndpointExposesPrometheusText(t *testing.T) {
 	}
 }
 
+func TestVersionEndpointExposesRuntimeBuildVersion(t *testing.T) {
+	watcher, err := k8s.NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+	server := New(":0", watcher, fstest.MapFS{
+		"index.html": {Data: []byte("ok")},
+	}, "v9.8.7")
+
+	request := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	recorder := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", response.StatusCode)
+	}
+	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		t.Fatalf("expected application/json, got %q", contentType)
+	}
+	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected no-store cache control, got %q", cacheControl)
+	}
+	if got := strings.TrimSpace(string(body)); got != `{"version":"v9.8.7"}` {
+		t.Fatalf("unexpected version response: %s", got)
+	}
+}
+
 func TestWebSocketDisconnectRemovesSubscriberWithoutTopologyUpdate(t *testing.T) {
 	watcher, err := k8s.NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
 	if err != nil {
@@ -99,7 +133,7 @@ func TestWebSocketDisconnectRemovesSubscriberWithoutTopologyUpdate(t *testing.T)
 	}
 	server := New(":0", watcher, fstest.MapFS{
 		"index.html": {Data: []byte("ok")},
-	})
+	}, "test")
 	httpServer := httptest.NewServer(server.httpServer.Handler)
 	defer httpServer.Close()
 

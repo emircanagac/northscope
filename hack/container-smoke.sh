@@ -3,6 +3,7 @@
 set -euo pipefail
 
 image="${1:-northscope:test}"
+expected_version="${2:-dev}"
 container_name="northscope-runtime-smoke"
 work_dir="$(mktemp -d)"
 api_pid=""
@@ -57,6 +58,7 @@ done
 
 curl --fail --silent http://127.0.0.1:18080/healthz >/dev/null
 curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null
+curl --fail --silent http://127.0.0.1:18080/api/version | grep --quiet "\"version\":\"${expected_version}\""
 curl --fail --silent http://127.0.0.1:18080/ | grep --quiet '<div id="root"></div>'
 
 runtime_user="$(docker inspect --format '{{.Config.User}}' "${container_name}")"

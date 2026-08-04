@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/emircanagac/northscope/internal/buildinfo"
 	"github.com/emircanagac/northscope/internal/k8s"
 	"github.com/emircanagac/northscope/internal/server"
 	"github.com/emircanagac/northscope/ui"
@@ -19,15 +21,21 @@ import (
 
 func main() {
 	var (
-		addr       = flag.String("addr", ":8080", "HTTP listen address")
-		kubeconfig = flag.String("kubeconfig", "", "Path to kubeconfig file. Defaults to in-cluster config, then ~/.kube/config.")
-		namespace  = flag.String("namespace", "", "Watch one namespace. Empty watches all namespaces.")
-		gatewayAPI = flag.Bool("gateway-api", true, "Discover Gateway API resources when their CRDs are installed")
-		f5         = flag.Bool("f5", true, "Discover F5 CIS custom resources when their CRDs are installed")
+		addr        = flag.String("addr", ":8080", "HTTP listen address")
+		kubeconfig  = flag.String("kubeconfig", "", "Path to kubeconfig file. Defaults to in-cluster config, then ~/.kube/config.")
+		namespace   = flag.String("namespace", "", "Watch one namespace. Empty watches all namespaces.")
+		gatewayAPI  = flag.Bool("gateway-api", true, "Discover Gateway API resources when their CRDs are installed")
+		f5          = flag.Bool("f5", true, "Discover F5 CIS custom resources when their CRDs are installed")
+		showVersion = flag.Bool("version", false, "Print the NorthScope version and exit")
 	)
 	flag.Parse()
 
-	log.Printf("NorthScope starting")
+	if *showVersion {
+		fmt.Println(buildinfo.Version)
+		return
+	}
+
+	log.Printf("NorthScope %s starting", buildinfo.Version)
 
 	staticFS, err := fs.Sub(ui.Dist, "dist")
 	if err != nil {
@@ -57,7 +65,7 @@ func main() {
 		}
 	}()
 
-	httpServer := server.New(*addr, watcher, staticFS)
+	httpServer := server.New(*addr, watcher, staticFS, buildinfo.Version)
 
 	go func() {
 		log.Printf("NorthScope HTTP server listening on %s", *addr)
