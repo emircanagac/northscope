@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:233761595746769ebfdb6090f44fc7cdf818ae0ce62d2b37e0367723b9823e36 AS ui-deps
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS ui-deps
 WORKDIR /src/ui
 COPY ui/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline --no-audit
@@ -9,7 +9,7 @@ FROM ui-deps AS ui-build
 COPY ui/ ./
 RUN npm run test:ui-smoke && npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS go-base
+FROM --platform=$BUILDPLATFORM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS go-base
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum ./
@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   -ldflags="-s -w -X github.com/emircanagac/northscope/internal/buildinfo.Version=${VERSION}" \
   -o /out/northscope ./cmd/northscope
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS runtime
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS runtime
 WORKDIR /
 COPY --from=build /out/northscope /northscope
 EXPOSE 8080
