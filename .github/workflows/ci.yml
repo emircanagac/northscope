@@ -84,11 +84,41 @@ jobs:
             --set podDisruptionBudget.enabled=true \
             | grep --quiet '^apiVersion: policy/v1beta1$'
 
-      - name: Check authentication rendering
-        run: bash hack/check-helm-auth.sh
+      - name: Check sign-in rendering
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          chart=charts/northscope
+
+          default="$(helm template northscope "$chart")"
+          grep --quiet '^  name: northscope-auth' <<<"$default" || fail "default render has no auth Secret"
+          grep --quiet '"-auth-dir=/etc/northscope/auth"' <<<"$default" || fail "default Deployment does not enable auth"
+          grep --quiet 'secretName: northscope-auth' <<<"$default" || fail "auth Secret is not mounted"
+          grep --quiet 'checksum/auth:' <<<"$default" || fail "Pod does not roll when credentials change"
+
+          existing="$(helm template northscope "$chart" --set auth.existingSecret=platform-auth)"
+          if grep --quiet '^kind: Secret' <<<"$existing"; then fail "existingSecret still renders a Secret"; fi
+          grep --quiet 'secretName: platform-auth' <<<"$existing" || fail "existingSecret is not mounted"
+
+          disabled="$(helm template northscope "$chart" --set auth.enabled=false)"
+          if grep --quiet -- '-auth-' <<<"$disabled"; then fail "auth.enabled=false still passes auth flags"; fi
+          if grep --quiet '^kind: Secret' <<<"$disabled"; then fail "auth.enabled=false still renders a Secret"; fi
+
+          if helm template northscope "$chart" --set auth.cookieSecure=sometimes >/dev/null 2>&1; then
+            fail "invalid auth.cookieSecure was accepted"
+          fi
 
       - name: Render chart repository landing page
-        run: bash hack/render-helm-repo-page.sh 0.0.0-ci "$RUNNER_TEMP/index.html"
+        run: |
+          chart=charts/northscope/Chart.yaml
+          version="$(awk '/^version:/ {print $2; exit}' "$chart")"
+          app_version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" | tr -d '"')"
+          kube_version="$(awk '/^kubeVersion:/ {print $2; exit}' "$chart" | tr -d '"' | sed -E 's/^>=([0-9]+\.[0-9]+).*/\1/')"
+          sed -e "s/@CHART_VERSION@/${version}/g" -e "s/@APP_VERSION@/${app_version}/g" -e "s/@KUBE_VERSION@/${kube_version}/g" \
+            .github/pages/index.html > "$RUNNER_TEMP/index.html"
+          if grep --quiet '@[A-Z_]*@' "$RUNNER_TEMP/index.html"; then
+            echo "::error::Unresolved placeholder in the landing page"
+            exit 1
+          fi
 
       - name: Render namespace-scoped discovery
         run: |
@@ -210,7 +240,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run runtime smoke test
-        run: bash hack/container-smoke.sh northscope:test ci
+        run: bash scripts/container-smoke.sh northscope:test ci
 
       - name: Scan runtime image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -350,7 +380,17 @@ jobs:
             --merge .helm-repo/index.yaml
 
       - name: Add chart repository landing page
-        run: bash hack/render-helm-repo-page.sh "${GITHUB_REF_NAME#v}" .helm-repo/index.html
+        run: |
+          chart=charts/northscope/Chart.yaml
+          version="${GITHUB_REF_NAME#v}"
+          app_version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" | tr -d '"')"
+          kube_version="$(awk '/^kubeVersion:/ {print $2; exit}' "$chart" | tr -d '"' | sed -E 's/^>=([0-9]+\.[0-9]+).*/\1/')"
+          sed -e "s/@CHART_VERSION@/${version}/g" -e "s/@APP_VERSION@/${app_version}/g" -e "s/@KUBE_VERSION@/${kube_version}/g" \
+            .github/pages/index.html > .helm-repo/index.html
+          if grep --quiet '@[A-Z_]*@' .helm-repo/index.html; then
+            echo "::error::Unresolved placeholder in the landing page"
+            exit 1
+          fi
 
       - name: Publish chart repository
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
