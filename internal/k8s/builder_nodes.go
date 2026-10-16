@@ -136,6 +136,26 @@ func (b *topologyBuilder) addGatewayClassController(className, controller string
 	b.addControllerNode(gatewayClassControllerNodeID(className), className, controller, "GatewayClass", "Configured")
 }
 
+// addStatusController represents an ingress controller known only through the
+// Service whose load balancer address appears in an Ingress status.
+func (b *topologyBuilder) addStatusController(service *corev1.Service) {
+	b.addNode(models.Node{
+		ID:   statusControllerNodeID(service),
+		Type: "northscopeNode",
+		Data: models.NodeData{
+			Label:  service.Name,
+			Kind:   models.NodeKindController,
+			Name:   service.Name,
+			Status: "Inferred",
+			Properties: map[string]string{
+				"source":     "Ingress status address",
+				"controller": "Service " + displayName(service.Namespace, service.Name),
+				"service":    displayName(service.Namespace, service.Name),
+			},
+		},
+	})
+}
+
 func (b *topologyBuilder) addControllerNode(id, className, controller, source, status string) {
 	properties := map[string]string{
 		"source": source,

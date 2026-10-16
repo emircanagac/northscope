@@ -116,11 +116,39 @@ func BuildTopologyWithResourcesAndEndpoints(
 		}
 	}
 
+	// An Ingress without a resolvable class can still be tied to the controller
+	// that published its status address, such as k3s Traefik on clusters where
+	// it has no IngressClass object.
+	statusControllerByIngress := map[string]string{}
+	statusControllerByService := map[string]string{}
+	servicesByAddress := servicesByLoadBalancerAddress(services)
+	for _, ingress := range ingresses {
+		if ingressControllerClassName(ingress, ingressClassesByName) != "" {
+			continue
+		}
+		svc := ingressStatusControllerService(ingress, servicesByAddress)
+		if svc == nil {
+			continue
+		}
+		serviceKey := namespacedKey(svc.Namespace, svc.Name)
+		controllerID := ""
+		if className := matchingIngressClassName(svc, servicePodsCache[serviceKey], controllerClassesByName); className != "" {
+			controllerID = controllerNodeID(className)
+		} else {
+			controllerID = statusControllerNodeID(svc)
+			statusControllerByService[serviceKey] = controllerID
+			builder.addStatusController(svc)
+		}
+		statusControllerByIngress[namespacedKey(ingress.Namespace, ingress.Name)] = controllerID
+	}
+
 	for _, svc := range services {
 		servicePods := servicePodsCache[namespacedKey(svc.Namespace, svc.Name)]
 		targetNodeID := nodeID(models.NodeKindService, svc.Namespace, svc.Name)
 		if controllerClassName := matchingIngressClassName(svc, servicePods, controllerClassesByName); controllerClassName != "" {
 			targetNodeID = controllerNodeID(controllerClassName)
+		} else if controllerID := statusControllerByService[namespacedKey(svc.Namespace, svc.Name)]; controllerID != "" {
+			targetNodeID = controllerID
 		}
 
 		switch svc.Spec.Type {
@@ -163,19 +191,21 @@ func BuildTopologyWithResourcesAndEndpoints(
 			})
 			builder.addEdge(lbID, nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name), "fronts", "Ingress status")
 		}
-		if controllerClassName := ingressControllerClassName(ingress, ingressClassesByName); controllerClassName != "" {
-			builder.addEdge(
-				controllerNodeID(controllerClassName),
-				nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
-				"controls",
-				"IngressClass",
-			)
+		// controllerName is only checked for presence by the route diagnosis.
+		controllerName := ingressControllerClassName(ingress, ingressClassesByName)
+		controllerID, controllerSource := "", ""
+		if controllerName != "" {
+			controllerID, controllerSource = controllerNodeID(controllerName), "IngressClass"
+		} else if id := statusControllerByIngress[namespacedKey(ingress.Namespace, ingress.Name)]; id != "" {
+			controllerName, controllerID, controllerSource = id, id, "Ingress status"
 		}
-		controllerClassName := ingressControllerClassName(ingress, ingressClassesByName)
+		if controllerID != "" {
+			builder.addEdge(controllerID, nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name), "controls", controllerSource)
+		}
 		for _, route := range ingressRoutes(ingress) {
 			svc := servicesByKey[namespacedKey(ingress.Namespace, route.ServiceName)]
 			pods := servicePodsCache[namespacedKey(ingress.Namespace, route.ServiceName)]
-			diagnosis := diagnoseIngressRoute(ingress, route, controllerClassName, svc, pods, endpointStatsByService[namespacedKey(ingress.Namespace, route.ServiceName)])
+			diagnosis := diagnoseIngressRoute(ingress, route, controllerName, svc, pods, endpointStatsByService[namespacedKey(ingress.Namespace, route.ServiceName)])
 			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
 			builder.addIngressRoute(ingress, route, diagnosis)
 			builder.addEdge(

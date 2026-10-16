@@ -6,7 +6,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
-No unreleased changes.
+- Linked Ingresses without a resolvable IngressClass to the controller whose Service load balancer address appears in the Ingress status, so controllers that never created an IngressClass (such as Traefik on k3s 1.21) show their LoadBalancer and NodePort entry path instead of a missing-controller warning.
 
 ## 1.0.0 - 2026-10-16
 
