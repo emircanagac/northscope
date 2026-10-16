@@ -1,0 +1,18 @@
+apiVersion: v2
+name: northscope
+description: Read-only Kubernetes north-south traffic topology debugger
+type: application
+kubeVersion: ">=1.20.0-0"
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - kubernetes
+  - ingress
+  - topology
+  - debugging
+  - observability
+home: https://github.com/emircanagac/northscope
+sources:
+  - https://github.com/emircanagac/northscope
+maintainers:
+  - name: Emircan Agac

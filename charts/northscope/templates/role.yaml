@@ -1,0 +1,44 @@
+{{- if and .Values.rbac.create .Values.watchNamespace -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "northscope.fullname" . }}-read-only
+  namespace: {{ .Values.watchNamespace }}
+  labels:
+    {{- include "northscope.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - endpoints
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  {{- if .Values.discovery.gatewayAPI.enabled }}
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gateways
+      - grpcroutes
+      - httproutes
+      - tcproutes
+      - tlsroutes
+      - udproutes
+      - referencegrants
+    verbs: ["get", "list", "watch"]
+  {{- end }}
+  {{- if .Values.discovery.f5.enabled }}
+  - apiGroups: ["cis.f5.com"]
+    resources:
+      - ingresslinks
+      - virtualservers
+      - transportservers
+    verbs: ["get", "list", "watch"]
+  {{- end }}
+{{- end }}

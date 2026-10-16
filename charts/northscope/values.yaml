@@ -1,0 +1,88 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/emircanagac/northscope
+  tag: 1.0.0
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+# Empty watches all namespaces. Set one namespace to reduce the watched and
+# namespaced RBAC surface while retaining cluster-scoped class/node discovery.
+watchNamespace: ""
+
+discovery:
+  gatewayAPI:
+    enabled: true
+  f5:
+    enabled: true
+
+podAnnotations: {}
+
+# The image already runs as the numeric non-root user 65532:65532. No fixed
+# UID is set here so platforms that assign UIDs per namespace, such as
+# OpenShift's restricted SCC, can run the default install.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: northscope.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+networkPolicy:
+  enabled: false
+  ingress:
+    from: []
+  egress:
+    enabled: false
+    rules: []
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  maxUnavailable: ""
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+extraArgs: []

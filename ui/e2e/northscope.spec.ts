@@ -1,0 +1,477 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const snapshot = {
+  version: 1,
+  generatedAt: '2026-07-16T12:00:00Z',
+  inventory: {
+    ingressClasses: 1,
+    ingresses: 1,
+    services: 12,
+    pods: 36,
+    nodes: 5,
+  },
+  nodes: [
+    {
+      id: 'controller:nginx',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'nginx',
+        kind: 'Controller',
+        name: 'nginx',
+        properties: { controller: 'k8s.io/ingress-nginx' },
+      },
+    },
+    {
+      id: 'ingress:demo:store',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'demo/store',
+        kind: 'Ingress',
+        namespace: 'demo',
+        name: 'store',
+        status: 'Configured',
+        properties: { className: 'nginx', hosts: 'shop.example.com' },
+      },
+    },
+    {
+      id: 'route:demo:store:root',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'shop.example.com /',
+        kind: 'Route',
+        namespace: 'demo',
+        name: 'shop.example.com /',
+        status: 'Backends ready',
+        properties: {
+          host: 'shop.example.com',
+          path: '/',
+          backend: 'frontend',
+          servicePort: 'http',
+          ingressName: 'store',
+          severity: 'ok',
+        },
+      },
+    },
+    {
+      id: 'service:demo:frontend',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'demo/frontend',
+        kind: 'Service',
+        namespace: 'demo',
+        name: 'frontend',
+        status: 'Active',
+        properties: { ports: '80/TCP' },
+      },
+    },
+    {
+      id: 'pod:demo:frontend-6f46558fcf-very-long-pod-name',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'demo/frontend-6f46558fcf-very-long-pod-name',
+        kind: 'Pod',
+        namespace: 'demo',
+        name: 'frontend-6f46558fcf-very-long-pod-name',
+        status: 'ContainersNotReadyWithAnIntentionallyLongDiagnosticReason',
+        properties: { podIP: '10.42.0.18', nodeName: 'worker-with-a-long-name' },
+      },
+    },
+    {
+      id: 'node::worker-with-a-long-name',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'worker-with-a-long-name',
+        kind: 'Node',
+        name: 'worker-with-a-long-name',
+        status: 'Ready=True',
+      },
+    },
+  ],
+  edges: [
+    { id: 'controller-ingress', source: 'controller:nginx', target: 'ingress:demo:store', data: { kind: 'controls' } },
+    { id: 'ingress-route', source: 'ingress:demo:store', target: 'route:demo:store:root', data: { kind: 'defines' } },
+    { id: 'route-service', source: 'route:demo:store:root', target: 'service:demo:frontend', data: { kind: 'routes' } },
+    {
+      id: 'service-pod',
+      source: 'service:demo:frontend',
+      target: 'pod:demo:frontend-6f46558fcf-very-long-pod-name',
+      data: { kind: 'selects' },
+    },
+    {
+      id: 'node-pod',
+      source: 'node::worker-with-a-long-name',
+      target: 'pod:demo:frontend-6f46558fcf-very-long-pod-name',
+      data: { kind: 'hosts' },
+    },
+  ],
+};
+
+const gatewaySnapshot = {
+  ...snapshot,
+  nodes: [
+    {
+      id: 'loadbalancer:demo:gateway-public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Gateway LB',
+        kind: 'LoadBalancer',
+        namespace: 'demo',
+        name: 'gateway-public',
+        status: 'Active',
+        properties: { provider: 'Gateway API', address: '203.0.113.10' },
+      },
+    },
+    {
+      id: 'controller:public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: { label: 'public', kind: 'Controller', name: 'public', status: 'Configured' },
+    },
+    {
+      id: 'gateway:demo:public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: { label: 'demo/public', kind: 'Gateway', namespace: 'demo', name: 'public', status: 'Programmed' },
+    },
+    {
+      id: 'route:demo:store:HTTPRoute',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'demo/store',
+        kind: 'Route',
+        namespace: 'demo',
+        name: 'store',
+        status: 'Accepted',
+        properties: { kind: 'HTTPRoute', hostnames: 'gateway.example.com', paths: '/, /api' },
+      },
+    },
+    snapshot.nodes[3],
+    snapshot.nodes[4],
+    snapshot.nodes[5],
+  ],
+  edges: [
+    { id: 'lb-gateway', source: 'loadbalancer:demo:gateway-public', target: 'gateway:demo:public', data: { kind: 'fronts' } },
+    { id: 'controller-gateway', source: 'controller:public', target: 'gateway:demo:public', data: { kind: 'controls' } },
+    { id: 'gateway-route', source: 'gateway:demo:public', target: 'route:demo:store:HTTPRoute', data: { kind: 'attaches' } },
+    { id: 'gateway-service', source: 'route:demo:store:HTTPRoute', target: 'service:demo:frontend', data: { kind: 'routes' } },
+    snapshot.edges[3],
+    snapshot.edges[4],
+  ],
+};
+
+const f5Snapshot = {
+  ...snapshot,
+  nodes: [
+    {
+      id: 'loadbalancer:demo:f5-public',
+      type: 'northscopeNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'F5VirtualServer',
+        kind: 'LoadBalancer',
+        namespace: 'demo',
+        name: 'public-vs',
+        status: 'Configured',
+        properties: { provider: 'F5', kind: 'F5VirtualServer', hostnames: 'f5.example.com' },
+      },
+    },
+    snapshot.nodes[3],
+    snapshot.nodes[4],
+    snapshot.nodes[5],
+  ],
+  edges: [
+    { id: 'f5-service', source: 'loadbalancer:demo:f5-public', target: 'service:demo:frontend', data: { kind: 'balances' } },
+    snapshot.edges[3],
+    snapshot.edges[4],
+  ],
+};
+
+async function installFakeTopologyStream(page: Page, topologySnapshot: object = snapshot): Promise<void> {
+  await page.addInitScript((topologySnapshot) => {
+    type SocketHandler = ((event: Event) => void) | null;
+    type MessageHandler = ((event: MessageEvent) => void) | null;
+
+    class FakeWebSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+
+      readyState = FakeWebSocket.CONNECTING;
+      onopen: SocketHandler = null;
+      onmessage: MessageHandler = null;
+      onerror: SocketHandler = null;
+      onclose: SocketHandler = null;
+
+      constructor() {
+        const control = window.__northscopeSocketControl;
+        control.instances.push(this);
+        window.setTimeout(() => {
+          this.readyState = FakeWebSocket.OPEN;
+          this.onopen?.(new Event('open'));
+          this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(topologySnapshot) }));
+        }, 10);
+      }
+
+      close() {
+        if (this.readyState === FakeWebSocket.CLOSED) {
+          return;
+        }
+        this.readyState = FakeWebSocket.CLOSED;
+        this.onclose?.(new Event('close'));
+      }
+
+      send() {}
+
+      emit(payload: unknown) {
+        if (this.readyState !== FakeWebSocket.OPEN) {
+          return;
+        }
+        this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(payload) }));
+      }
+    }
+
+    window.__northscopeSocketControl = {
+      instances: [] as FakeWebSocket[],
+      closeLatest() {
+        this.instances.at(-1)?.close();
+      },
+      send(payload: unknown) {
+        this.instances.at(-1)?.emit(payload);
+      },
+    };
+    Object.assign(window, { WebSocket: FakeWebSocket });
+  }, topologySnapshot);
+}
+
+declare global {
+  interface Window {
+    __northscopeSocketControl: {
+      instances: Array<{ close(): void }>;
+      closeLatest(): void;
+      send(payload: unknown): void;
+    };
+    __northscopeEdgeLabelMonitor: {
+      active: boolean;
+      frames: number;
+      missingFrames: number;
+    };
+  }
+}
+
+async function openSelectedTopology(
+  page: Page,
+  topologySnapshot: object = snapshot,
+  host = 'shop.example.com',
+): Promise<void> {
+  await installFakeTopologyStream(page, topologySnapshot);
+  await page.route('**/api/version', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ version: 'v9.8.7' }),
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config');
+  await page.getByTestId('host-route').filter({ hasText: host }).click();
+  await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
+}
+
+test('header displays the runtime application version', async ({ page }) => {
+  await openSelectedTopology(page);
+  await expect(page.getByTestId('app-version')).toHaveText('v9.8.7');
+});
+
+test('Gateway API resources are selectable traffic roots', async ({ page }) => {
+  await openSelectedTopology(page, gatewaySnapshot, 'gateway.example.com');
+  await expect(page.getByText('Gateway · 1 host / 2 paths')).toBeVisible();
+  await expect(page.locator('[data-kind="Gateway"]')).toBeVisible();
+  await expect(page.locator('[data-kind="Route"]')).toBeVisible();
+});
+
+test('F5 resources are selectable traffic roots', async ({ page }) => {
+  await openSelectedTopology(page, f5Snapshot, 'f5.example.com');
+  await expect(page.getByText('F5VirtualServer · 1 host / 1 path')).toBeVisible();
+  await expect(page.locator('[data-kind="LoadBalancer"]')).toBeVisible();
+});
+
+test('dark theme persists across reloads', async ({ page }) => {
+  await openSelectedTopology(page);
+
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(page.getByRole('button', { name: 'Switch to light theme' })).toBeVisible();
+});
+
+test('websocket reconnect restores live topology', async ({ page }) => {
+  await openSelectedTopology(page);
+
+  await page.evaluate(() => window.__northscopeSocketControl.closeLatest());
+  await expect(page.getByTestId('stream-status')).toHaveText('Reconnecting');
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config', { timeout: 3_000 });
+  await expect.poll(() => page.evaluate(() => window.__northscopeSocketControl.instances.length)).toBeGreaterThan(1);
+});
+
+test('pan and zoom remain stable without viewport reset', async ({ page }) => {
+  await openSelectedTopology(page);
+
+  const pane = page.locator('.react-flow__pane');
+  const viewport = page.locator('.react-flow__viewport');
+  const initialTransform = await viewport.getAttribute('style');
+  const box = await pane.boundingBox();
+  if (!box) {
+    throw new Error('React Flow pane has no bounding box');
+  }
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -500);
+  await expect.poll(() => viewport.getAttribute('style')).not.toBe(initialTransform);
+  const zoomedTransform = await viewport.getAttribute('style');
+
+  await page.waitForTimeout(500);
+  await expect(viewport).toHaveAttribute('style', zoomedTransform ?? '');
+
+  await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.65);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => viewport.getAttribute('style')).not.toBe(zoomedTransform);
+});
+
+test('live pod updates keep expanded edge labels and viewport stable', async ({ page }) => {
+  await openSelectedTopology(page);
+  await page.getByRole('button', { name: 'Expanded' }).click();
+
+  const runsOnLabel = page.locator('.northscope-edge-label').filter({ hasText: 'runs on' }).first();
+  await expect(runsOnLabel).toBeVisible();
+  await page.waitForTimeout(250);
+
+  const viewport = page.locator('.react-flow__viewport');
+  const viewportTransform = await viewport.getAttribute('style');
+  const nodeTransforms = await page.locator('.react-flow__node').evaluateAll((items) =>
+    items.map((item) => ({
+      id: item.getAttribute('data-id'),
+      transform: (item as HTMLElement).style.transform,
+    })),
+  );
+
+  await page.evaluate(() => {
+    const label = Array.from(document.querySelectorAll<HTMLElement>('.northscope-edge-label')).find(
+      (item) => item.textContent?.trim() === 'runs on',
+    );
+    if (!label) {
+      throw new Error('runs on label was not found');
+    }
+
+    label.dataset.stabilityMarker = 'runs-on';
+    const monitor = {
+      active: true,
+      frames: 0,
+      missingFrames: 0,
+    };
+    window.__northscopeEdgeLabelMonitor = monitor;
+
+    const sample = () => {
+      if (!monitor.active) {
+        return;
+      }
+      monitor.frames += 1;
+      const current = document.querySelector<HTMLElement>('[data-stability-marker="runs-on"]');
+      if (!current || current.hidden || window.getComputedStyle(current).visibility === 'hidden') {
+        monitor.missingFrames += 1;
+      }
+      window.requestAnimationFrame(sample);
+    };
+    window.requestAnimationFrame(sample);
+  });
+
+  for (let version = 2; version <= 9; version += 1) {
+    const updatedSnapshot = {
+      ...snapshot,
+      version,
+      generatedAt: `2026-07-16T12:00:${String(version).padStart(2, '0')}Z`,
+      nodes: snapshot.nodes.map((item) =>
+        item.data.kind === 'Pod'
+          ? {
+              ...item,
+              data: {
+                ...item.data,
+                status: version % 2 === 0 ? 'Running' : 'ContainersNotReady',
+              },
+            }
+          : item,
+      ),
+    };
+    await page.evaluate((payload) => window.__northscopeSocketControl.send(payload), updatedSnapshot);
+    await page.waitForTimeout(80);
+  }
+
+  await page.waitForTimeout(250);
+  const monitor = await page.evaluate(() => {
+    const state = window.__northscopeEdgeLabelMonitor;
+    state.active = false;
+    return { frames: state.frames, missingFrames: state.missingFrames };
+  });
+
+  expect(monitor.frames).toBeGreaterThan(10);
+  expect(monitor.missingFrames).toBe(0);
+  await expect(page.locator('[data-stability-marker="runs-on"]')).toHaveCount(1);
+  await expect(viewport).toHaveAttribute('style', viewportTransform ?? '');
+  await expect
+    .poll(() =>
+      page.locator('.react-flow__node').evaluateAll((items) =>
+        items.map((item) => ({
+          id: item.getAttribute('data-id'),
+          transform: (item as HTMLElement).style.transform,
+        })),
+      ),
+    )
+    .toEqual(nodeTransforms);
+});
+
+test('simple and expanded cards share dimensions and contain their content', async ({ page }) => {
+  await openSelectedTopology(page);
+
+  const simpleIngress = page.locator('[data-kind="Ingress"]').first();
+  const simpleSize = await simpleIngress.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return { width: style.width, height: style.height };
+  });
+
+  await page.getByRole('button', { name: 'Expanded' }).click();
+  await expect(page.getByRole('button', { name: 'Expanded' })).toHaveAttribute('aria-pressed', 'true');
+  const expandedIngress = page.locator('[data-kind="Ingress"]').first();
+  const expandedSize = await expandedIngress.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return { width: style.width, height: style.height };
+  });
+
+  expect(simpleSize).toEqual(expandedSize);
+  await expect(page.locator('[data-kind="Pod"]').first()).toBeVisible();
+
+  const overflowCount = await page.getByTestId('topology-node-card').evaluateAll((cards) =>
+    cards.filter((card) => {
+      const bounds = card.getBoundingClientRect();
+      return Array.from(card.querySelectorAll<HTMLElement>('*')).some((child) => {
+        if (child.classList.contains('react-flow__handle')) {
+          return false;
+        }
+        const childBounds = child.getBoundingClientRect();
+        return childBounds.left < bounds.left - 1 || childBounds.right > bounds.right + 1 || childBounds.top < bounds.top - 1 || childBounds.bottom > bounds.bottom + 1;
+      });
+    }).length,
+  );
+  expect(overflowCount).toBe(0);
+});

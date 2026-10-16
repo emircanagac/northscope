@@ -1,0 +1,324 @@
+package k8s
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/emircanagac/northscope/internal/models"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
+)
+
+func TestWatcherAppliesNamespaceAndOptionalDiscoveryOptions(t *testing.T) {
+	watcher, err := newWatcherFromClients(
+		fake.NewSimpleClientset(),
+		nil,
+		time.Minute,
+		WatcherOptions{
+			GatewayAPI: false,
+			F5:         true,
+			Namespace:  "apps",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	if watcher.namespace != "apps" {
+		t.Fatalf("expected namespace apps, got %q", watcher.namespace)
+	}
+
+	gatewayRoute := schema.GroupVersionResource{
+		Group:    "gateway.networking.k8s.io",
+		Version:  "v1",
+		Resource: "httproutes",
+	}
+	f5VirtualServer := schema.GroupVersionResource{
+		Group:    "cis.f5.com",
+		Version:  "v1",
+		Resource: "virtualservers",
+	}
+	resources := watcher.preferredEnabledOptionalResources(map[schema.GroupVersionResource]struct{}{
+		gatewayRoute:    {},
+		f5VirtualServer: {},
+	})
+
+	if len(resources) != 1 {
+		t.Fatalf("expected only the F5 resource to remain enabled, got %#v", resources)
+	}
+	if resources[0].gvr != f5VirtualServer {
+		t.Fatalf("expected F5 virtual server, got %s", resources[0].gvr.String())
+	}
+}
+
+func TestWatcherKeepsLastSnapshotWhenBuildFails(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	atomic.StoreUint32(&watcher.ready, 1)
+	healthySnapshot := models.TopologySnapshot{
+		Nodes: []models.Node{{
+			ID: "node-1",
+			Data: models.NodeData{
+				Label: "node-1",
+			},
+		}},
+	}
+	buildErr := errors.New("cache lister failed")
+	call := 0
+	watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+		call++
+		if call == 1 {
+			return healthySnapshot, nil
+		}
+		return models.TopologySnapshot{}, buildErr
+	}
+
+	watcher.rebuildAndPublish()
+	before := watcher.Latest()
+	watcher.rebuildAndPublish()
+	after := watcher.Latest()
+
+	if before.Version != 1 {
+		t.Fatalf("expected first snapshot version 1, got %d", before.Version)
+	}
+	if after.Version != before.Version {
+		t.Fatalf("expected failed rebuild to keep version %d, got %d", before.Version, after.Version)
+	}
+	if len(after.Nodes) != 1 || after.Nodes[0].ID != "node-1" {
+		t.Fatalf("expected failed rebuild to keep last healthy snapshot, got %#v", after.Nodes)
+	}
+
+	metrics := watcher.Metrics()
+	if metrics.SnapshotBuildsTotal != 1 {
+		t.Fatalf("expected 1 successful build, got %d", metrics.SnapshotBuildsTotal)
+	}
+	if metrics.SnapshotBuildErrorsTotal != 1 {
+		t.Fatalf("expected 1 build error, got %d", metrics.SnapshotBuildErrorsTotal)
+	}
+	if metrics.SnapshotVersion != 1 {
+		t.Fatalf("expected snapshot version 1, got %d", metrics.SnapshotVersion)
+	}
+	if metrics.SnapshotNodes != 1 {
+		t.Fatalf("expected 1 snapshot node, got %d", metrics.SnapshotNodes)
+	}
+	if metrics.LastSnapshotBuildDurationSeconds < 0 {
+		t.Fatalf("expected non-negative build duration, got %f", metrics.LastSnapshotBuildDurationSeconds)
+	}
+}
+
+func TestWatcherSendsLatestSnapshotToReconnectedSubscriber(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	atomic.StoreUint32(&watcher.ready, 1)
+	watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+		return models.TopologySnapshot{
+			GeneratedAt: time.Now().UTC(),
+			Nodes: []models.Node{{
+				ID: "ingress-1",
+				Data: models.NodeData{
+					Label: "ingress-1",
+				},
+			}},
+		}, nil
+	}
+	watcher.rebuildAndPublish()
+
+	firstUpdates, firstUnsubscribe := watcher.Subscribe(1)
+	firstUnsubscribe()
+
+	select {
+	case <-firstUpdates:
+	case <-time.After(time.Second):
+		t.Fatal("expected initial subscriber to receive latest snapshot")
+	}
+
+	reconnectedUpdates, reconnectedUnsubscribe := watcher.Subscribe(1)
+	defer reconnectedUnsubscribe()
+
+	select {
+	case snapshot := <-reconnectedUpdates:
+		if snapshot.Version != 1 {
+			t.Fatalf("expected reconnected subscriber to receive snapshot version 1, got %d", snapshot.Version)
+		}
+		if len(snapshot.Nodes) != 1 || snapshot.Nodes[0].ID != "ingress-1" {
+			t.Fatalf("expected reconnected subscriber to receive latest snapshot, got %#v", snapshot.Nodes)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected reconnected subscriber to receive latest snapshot")
+	}
+}
+
+func TestWatcherRunStopsOnContextCancel(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- watcher.Run(ctx)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for !watcher.Ready() {
+		select {
+		case err := <-errCh:
+			t.Fatalf("watcher exited before becoming ready: %v", err)
+		case <-deadline:
+			t.Fatal("watcher did not become ready")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not stop after context cancellation")
+	}
+}
+
+func TestWatcherCoalescesBurstEventsIntoSingleSnapshot(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	watcher.rebuildDebounce = 20 * time.Millisecond
+	atomic.StoreUint32(&watcher.ready, 1)
+	watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+		return models.TopologySnapshot{GeneratedAt: time.Now().UTC()}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- watcher.runRebuildLoop(ctx)
+	}()
+
+	for i := 0; i < 10; i++ {
+		watcher.rebuildAndPublishWhenReady()
+	}
+
+	deadline := time.After(time.Second)
+	for watcher.Metrics().SnapshotBuildsTotal < 1 {
+		select {
+		case err := <-errCh:
+			t.Fatalf("rebuild loop exited early: %v", err)
+		case <-deadline:
+			t.Fatal("coalesced snapshot was not built")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if builds := watcher.Metrics().SnapshotBuildsTotal; builds != 1 {
+		t.Fatalf("expected burst to produce 1 snapshot build, got %d", builds)
+	}
+}
+
+func TestWatcherSkipsPublishingUnchangedTopology(t *testing.T) {
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	atomic.StoreUint32(&watcher.ready, 1)
+	watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+		return models.TopologySnapshot{
+			GeneratedAt: time.Now().UTC(),
+			Inventory:   models.ClusterInventory{Ingresses: 1},
+			Nodes:       []models.Node{{ID: "ingress-1"}},
+		}, nil
+	}
+
+	watcher.rebuildAndPublish()
+	watcher.rebuildAndPublish()
+
+	metrics := watcher.Metrics()
+	if metrics.SnapshotBuildsTotal != 2 {
+		t.Fatalf("expected 2 successful builds, got %d", metrics.SnapshotBuildsTotal)
+	}
+	if metrics.SnapshotPublishesTotal != 1 {
+		t.Fatalf("expected 1 published snapshot, got %d", metrics.SnapshotPublishesTotal)
+	}
+	if metrics.SnapshotUnchangedTotal != 1 {
+		t.Fatalf("expected 1 unchanged snapshot, got %d", metrics.SnapshotUnchangedTotal)
+	}
+	if metrics.SnapshotVersion != 1 {
+		t.Fatalf("expected unchanged topology to keep version 1, got %d", metrics.SnapshotVersion)
+	}
+}
+
+func TestWatcherCachesObjectsWithoutManagedFields(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace:     "apps",
+		Name:          "api-0",
+		ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl", Operation: metav1.ManagedFieldsOperationApply}},
+	}}
+	watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(pod), time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = watcher.Run(ctx)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for !watcher.Ready() {
+		select {
+		case <-deadline:
+			t.Fatal("watcher did not become ready")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	cached, err := watcher.podInformer.Lister().Pods("apps").Get("api-0")
+	if err != nil {
+		t.Fatalf("get cached pod: %v", err)
+	}
+	if len(cached.ManagedFields) != 0 {
+		t.Fatalf("expected managedFields to be stripped, got %#v", cached.ManagedFields)
+	}
+}
+
+func TestStripManagedFieldsHandlesUnstructuredObjects(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetName("route")
+	obj.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "controller"}})
+
+	transformed, err := stripManagedFields(obj)
+	if err != nil {
+		t.Fatalf("strip managed fields: %v", err)
+	}
+	if fields := transformed.(*unstructured.Unstructured).GetManagedFields(); len(fields) != 0 {
+		t.Fatalf("expected managedFields to be stripped, got %#v", fields)
+	}
+	if _, err := stripManagedFields("not an object"); err != nil {
+		t.Fatalf("expected non-object values to pass through, got %v", err)
+	}
+}

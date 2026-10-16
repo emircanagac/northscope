@@ -1,0 +1,41 @@
+version: 2
+
+multi-ecosystem-groups:
+  application-dependencies:
+    schedule:
+      interval: "monthly"
+  build-dependencies:
+    schedule:
+      interval: "monthly"
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "application-dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/ui"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "application-dependencies"
+    ignore:
+      # Keep the Playwright package aligned with the CI container image.
+      - dependency-name: "@playwright/test"
+      # Tailwind major releases require an explicit migration.
+      - dependency-name: "tailwindcss"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "build-dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "build-dependencies"

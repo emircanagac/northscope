@@ -1,0 +1,21 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- if semverCompare ">=1.21.0-0" .Capabilities.KubeVersion.Version }}
+apiVersion: policy/v1
+{{- else }}
+apiVersion: policy/v1beta1
+{{- end }}
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "northscope.fullname" . }}
+  labels:
+    {{- include "northscope.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "northscope.selectorLabels" . | nindent 6 }}
+  {{- if ne (toString .Values.podDisruptionBudget.maxUnavailable) "" }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+{{- end }}

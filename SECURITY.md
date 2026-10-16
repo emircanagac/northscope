@@ -1,0 +1,82 @@
+# Security Policy
+
+NorthScope is a read-only Kubernetes topology debugger. Security is especially important because the application runs inside a cluster and watches cluster resources.
+
+## Supported Versions
+
+NorthScope is currently pre-beta and requires Kubernetes 1.20 or newer. Security fixes target the `main` branch and the latest published container image.
+
+## Reporting a Vulnerability
+
+Please do not open a public issue for security vulnerabilities.
+
+Use GitHub private vulnerability reporting if it is enabled for this repository. If private reporting is not available, contact the maintainer listed in [MAINTAINERS.md](MAINTAINERS.md) before sharing public details.
+
+Helpful report details:
+
+- Affected version or commit
+- Deployment method and Helm values, if relevant
+- Impacted Kubernetes permissions or exposed data
+- Reproduction steps
+- Suggested mitigation, if known
+
+## Security Model
+
+NorthScope should remain read-only:
+
+- Kubernetes RBAC should use only `get`, `list`, and `watch`.
+- The application should not exec into Pods, proxy traffic, mutate resources, or create CRDs.
+- The UI should not expose secrets or sensitive object data.
+- The container should run as non-root with a minimal runtime image.
+
+Changes that weaken this model require explicit maintainer review.
+
+## Kubernetes Permissions
+
+The default Helm chart creates read-only cluster-wide permissions because traffic paths commonly cross namespaces and Node placement is part of the topology. Set `watchNamespace` to use a namespaced Role for namespaced resources while retaining a small ClusterRole for Nodes and class metadata.
+
+| API group | Resources | Purpose |
+| --- | --- | --- |
+| core | nodes | Backend Node placement |
+| core | pods, services, endpoints | Backend Pod readiness, Service routing, and legacy Endpoints fallback |
+| discovery.k8s.io | endpointslices | EndpointSlice and selector-less Service resolution |
+| networking.k8s.io | ingressclasses, ingresses | Ingress ownership, hosts, paths, and controller mapping |
+| gateway.networking.k8s.io | gatewayclasses, gateways, grpcroutes, httproutes, tcproutes, tlsroutes, udproutes, referencegrants | Optional Gateway API topology and cross-namespace backend authorization when the CRDs are installed |
+| cis.f5.com | ingresslinks, virtualservers, transportservers | Optional F5 CIS topology when the CRDs are installed |
+
+The chart does not grant access to Secrets, ConfigMaps, Events, Pod logs, Pod exec, or resource mutation verbs such as `create`, `update`, `patch`, or `delete`.
+
+Gateway API and F5 discovery can be disabled independently. Their optional RBAC rules and runtime watches are omitted when disabled.
+
+If you disable chart-managed RBAC with `rbac.create=false`, provide an equivalent read-only role before starting NorthScope.
+
+## Exposed Data
+
+NorthScope can display internal topology metadata, including:
+
+- hostnames and Ingress paths
+- Service names and ports
+- Pod names, readiness state, and Pod IPs
+- Node names
+- EndpointSlice and legacy Endpoints addresses, including external endpoint IPs for selector-less Services
+- Gateway API and F5 CIS object names and selected routing fields when those CRDs are present
+
+Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. In default mode, inventory counters remain cluster-wide. With `watchNamespace` set, namespaced counters and routes are limited to that namespace while Node and class metadata remain cluster-scoped.
+
+NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, and websocket clients. Keep metrics access behind the same trusted boundary as the UI.
+
+Route health labels are derived from Kubernetes object status, backend references, ports, readiness, and endpoint data. They are not active network probes and must not be treated as proof that an application or external load balancer is reachable.
+
+Run NorthScope behind trusted internal access controls. If exposed through Ingress, configure TLS and authentication at the ingress controller, identity proxy, or platform edge. See [Production Access](docs/production-access.md) for examples.
+
+## Deployment Hardening
+
+Recommended production settings:
+
+- use a private/internal hostname
+- enable TLS and authentication before exposing the UI outside a trusted network
+- enable `networkPolicy` where your CNI enforces NetworkPolicy
+- enable `podDisruptionBudget` when running more than one replica
+- keep `securityContext` and `podSecurityContext` hardened
+- pin chart versions for production changes and verify the chart checksum from the GitHub release
+- verify the published container provenance attestation before promotion
