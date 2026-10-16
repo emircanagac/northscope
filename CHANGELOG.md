@@ -7,6 +7,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 ## Unreleased
 
 - Fixed rebuilds of unchanged cluster state republishing the whole topology to every WebSocket client: node positions no longer depend on informer list order.
+- Fixed an IngressClass and a GatewayClass with the same name (such as `nginx`, `traefik`, or `istio`) sharing one controller node: GatewayClass controllers now have their own node with `source: GatewayClass`, and Ingress and Gateway edges stay on their own controller.
 
 ## 1.0.0 - 2026-10-16
 
