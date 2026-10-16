@@ -194,7 +194,9 @@ const f5Snapshot = {
   ],
 };
 
-async function installFakeTopologyStream(page: Page, topologySnapshot: object = snapshot): Promise<void> {
+// installFakeTopologyStream replaces WebSocket with a fake that sends
+// topologySnapshot after connecting, or nothing when it is null.
+async function installFakeTopologyStream(page: Page, topologySnapshot: object | null = snapshot): Promise<void> {
   await page.addInitScript((topologySnapshot) => {
     type SocketHandler = ((event: Event) => void) | null;
     type MessageHandler = ((event: MessageEvent) => void) | null;
@@ -217,7 +219,9 @@ async function installFakeTopologyStream(page: Page, topologySnapshot: object = 
         window.setTimeout(() => {
           this.readyState = FakeWebSocket.OPEN;
           this.onopen?.(new Event('open'));
-          this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(topologySnapshot) }));
+          if (topologySnapshot) {
+            this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(topologySnapshot) }));
+          }
         }, 10);
       }
 
@@ -289,6 +293,86 @@ async function openSelectedTopology(
 test('header displays the runtime application version', async ({ page }) => {
   await openSelectedTopology(page);
   await expect(page.getByTestId('app-version')).toHaveText('v9.8.7');
+});
+
+test('header shows the snapshot age', async ({ page }) => {
+  const generatedAt = new Date(Date.now() - 5 * 60_000 - 5_000).toISOString();
+  await openSelectedTopology(page, { ...snapshot, generatedAt });
+
+  await expect(page.getByTestId('snapshot-age')).toHaveText('Snapshot 5m ago');
+  await expect(page.getByTestId('snapshot-age')).toHaveAttribute('title', /^Snapshot v1 generated /);
+});
+
+test('degraded watch health replaces Live config with a banner until it recovers', async ({ page }) => {
+  await installFakeTopologyStream(page, {
+    ...snapshot,
+    health: {
+      status: 'degraded',
+      degraded: [
+        {
+          resource: 'pods',
+          synced: true,
+          since: '2026-07-16T12:00:00Z',
+          error: 'pods is forbidden: User "system:serviceaccount:northscope:northscope" cannot watch resource "pods"',
+        },
+      ],
+    },
+  });
+  await page.goto('/');
+
+  await expect(page.getByTestId('stream-status')).toHaveText('Degraded');
+  const banner = page.getByTestId('health-banner');
+  await expect(banner).toContainText('Degraded: pods');
+  await expect(banner).toContainText('cannot watch resource "pods"');
+  await expect(banner).not.toContainText('not loaded');
+
+  // The last cached topology stays usable while degraded.
+  await page.getByTestId('host-route').filter({ hasText: 'shop.example.com' }).click();
+  await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
+
+  await page.evaluate(
+    (payload) => window.__northscopeSocketControl.send(payload),
+    { ...snapshot, version: 2, health: { status: 'ok' } },
+  );
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config');
+  await expect(banner).toHaveCount(0);
+});
+
+test('startup status names the resources that block the first snapshot', async ({ page }) => {
+  await installFakeTopologyStream(page, null);
+  await page.route('**/api/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'degraded',
+        ready: false,
+        snapshotVersion: 0,
+        degraded: ['pods'],
+        unsynced: ['pods'],
+        resources: [
+          {
+            resource: 'pods',
+            synced: false,
+            degraded: true,
+            degradedSince: '2026-07-16T12:00:00Z',
+            lastError: 'failed to list *v1.Pod: pods is forbidden',
+            errorCount: 4,
+          },
+          { resource: 'services', synced: true, degraded: false, errorCount: 0 },
+        ],
+      }),
+    });
+  });
+  await page.goto('/');
+
+  await expect(page.getByTestId('stream-status')).toHaveText('Syncing');
+  const banner = page.getByTestId('health-banner');
+  await expect(banner).toContainText('Degraded: pods');
+  await expect(banner).toContainText('pods (not loaded)');
+  await expect(banner).toContainText('failed to list *v1.Pod: pods is forbidden');
+  await expect(page.getByText('Waiting for Kubernetes caches: pods.')).toBeVisible();
+  await expect(page.getByTestId('snapshot-age')).toHaveCount(0);
 });
 
 test('Gateway API resources are selectable traffic roots', async ({ page }) => {

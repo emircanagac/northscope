@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +52,7 @@ func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string) *Ser
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/topology", s.handleTopology)
 	mux.HandleFunc("/ws", s.handleTopologyStream)
 	mux.HandleFunc("/ws/topology", s.handleTopologyStream)
@@ -90,12 +93,63 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleReadyz reports whether the first topology snapshot exists. Watch
+// errors after that do not fail readiness, because restarting or unrouting
+// NorthScope does not fix RBAC or API server problems; ?verbose lists the
+// degraded resources instead.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if _, verbose := r.URL.Query()["verbose"]; verbose {
+		s.writeVerboseReadyz(w)
+		return
+	}
 	if !s.watcher.Ready() {
 		http.Error(w, "topology snapshot is not ready", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) writeVerboseReadyz(w http.ResponseWriter) {
+	status := s.watcher.Status()
+	// Optional Gateway API and F5 informers never gate readiness.
+	var unsynced []string
+	for _, resource := range status.Resources {
+		if !resource.Optional && !resource.Synced {
+			unsynced = append(unsynced, resource.Resource)
+		}
+	}
+	var body strings.Builder
+	if len(unsynced) == 0 {
+		body.WriteString("[+]informer-sync ok\n")
+	} else {
+		fmt.Fprintf(&body, "[-]informer-sync waiting for: %s\n", strings.Join(unsynced, ", "))
+	}
+	if status.Ready {
+		fmt.Fprintf(&body, "[+]topology-snapshot ok (v%d)\n", status.SnapshotVersion)
+	} else {
+		body.WriteString("[-]topology-snapshot not generated yet\n")
+	}
+	if len(status.Degraded) == 0 {
+		body.WriteString("[+]watch-health ok\n")
+	} else {
+		fmt.Fprintf(&body, "[!]watch-health degraded: %s (does not affect readiness; see /api/status)\n", strings.Join(status.Degraded, ", "))
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if !status.Ready {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		body.WriteString("readyz check failed\n")
+	} else {
+		body.WriteString("readyz check passed\n")
+	}
+	_, _ = io.WriteString(w, body.String())
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.watcher.Status())
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
@@ -140,15 +194,63 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_publishes_total Topology snapshots published to clients.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_publishes_total counter\n")
 	_, _ = fmt.Fprintf(w, "northscope_snapshot_publishes_total %d\n", metrics.SnapshotPublishesTotal)
-	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_unchanged_total Successful builds skipped because topology was unchanged.\n")
+	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_unchanged_total Successful builds skipped because topology and watch health were unchanged.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_unchanged_total counter\n")
 	_, _ = fmt.Fprintf(w, "northscope_snapshot_unchanged_total %d\n", metrics.SnapshotUnchangedTotal)
 	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_build_duration_seconds Duration of the last topology snapshot build.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_build_duration_seconds gauge\n")
 	_, _ = fmt.Fprintf(w, "northscope_snapshot_build_duration_seconds %.6f\n", metrics.LastSnapshotBuildDurationSeconds)
+	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_generated_timestamp_seconds Unix time when the published topology snapshot was generated.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_generated_timestamp_seconds gauge\n")
+	_, _ = fmt.Fprintf(w, "northscope_snapshot_generated_timestamp_seconds %s\n", unixSeconds(metrics.SnapshotGeneratedAt))
 	_, _ = fmt.Fprintf(w, "# HELP northscope_websocket_clients Current topology websocket subscribers.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_websocket_clients gauge\n")
 	_, _ = fmt.Fprintf(w, "northscope_websocket_clients %d\n", metrics.WebsocketSubscribers)
+
+	_, _ = fmt.Fprintf(w, "# HELP northscope_informer_synced Whether the informer cache for a watched resource completed its initial list.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_informer_synced gauge\n")
+	for _, resource := range metrics.Resources {
+		_, _ = fmt.Fprintf(w, "northscope_informer_synced{resource=\"%s\"} %d\n", labelValue(resource.Resource), boolValue(resource.Synced))
+	}
+	_, _ = fmt.Fprintf(w, "# HELP northscope_informer_degraded Whether the latest list or watch for a resource failed, so its cached data may be stale.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_informer_degraded gauge\n")
+	for _, resource := range metrics.Resources {
+		_, _ = fmt.Fprintf(w, "northscope_informer_degraded{resource=\"%s\"} %d\n", labelValue(resource.Resource), boolValue(resource.Degraded))
+	}
+	_, _ = fmt.Fprintf(w, "# HELP northscope_watch_errors_total Failed list and watch attempts per watched resource.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_watch_errors_total counter\n")
+	for _, resource := range metrics.Resources {
+		_, _ = fmt.Fprintf(w, "northscope_watch_errors_total{resource=\"%s\"} %d\n", labelValue(resource.Resource), resource.ErrorCount)
+	}
+	_, _ = fmt.Fprintf(w, "# HELP northscope_last_watch_success_timestamp_seconds Unix time of the latest successful list, watch start, or watch event per resource.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_last_watch_success_timestamp_seconds gauge\n")
+	for _, resource := range metrics.Resources {
+		lastSuccess := time.Time{}
+		if resource.LastSuccessAt != nil {
+			lastSuccess = *resource.LastSuccessAt
+		}
+		_, _ = fmt.Fprintf(w, "northscope_last_watch_success_timestamp_seconds{resource=\"%s\"} %s\n", labelValue(resource.Resource), unixSeconds(lastSuccess))
+	}
+}
+
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
+func labelValue(value string) string {
+	return labelValueEscaper.Replace(value)
+}
+
+func boolValue(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func unixSeconds(value time.Time) string {
+	if value.IsZero() {
+		return "0"
+	}
+	return strconv.FormatFloat(float64(value.UnixMilli())/1000, 'f', 3, 64)
 }
 
 func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {

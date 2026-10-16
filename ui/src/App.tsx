@@ -10,7 +10,9 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { HealthBanner } from './components/HealthBanner';
 import { KubeNode } from './components/KubeNode';
+import { SnapshotAge } from './components/SnapshotAge';
 import { StableEdge } from './components/StableEdge';
 import { reconcileTopologyEdges, reconcileTopologyNodes } from './flowState';
 import {
@@ -19,6 +21,7 @@ import {
   type TopologyNode,
 } from './hooks/useTopologyStream';
 import { useAppVersion } from './hooks/useAppVersion';
+import { useWatcherStatus } from './hooks/useWatcherStatus';
 import { summarizeKinds } from './topologyView';
 import {
   filterEdgesForNodes,
@@ -41,6 +44,7 @@ import {
   routeMatchesSearch,
   type NamespaceOption,
 } from './uiState';
+import { degradedResources, healthFromStatus, streamStatusLabel } from './watchHealth';
 
 const nodeTypes = {
   northscopeNode: KubeNode,
@@ -67,16 +71,6 @@ function initialThemeMode(): ThemeMode {
     return 'light';
   }
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-function statusLabel(status: string, hasSnapshot: boolean): string {
-  if (status === 'connected') {
-    return hasSnapshot ? 'Live config' : 'Syncing';
-  }
-  if (status === 'connecting') {
-    return 'Connecting';
-  }
-  return 'Reconnecting';
 }
 
 export default function App() {
@@ -193,6 +187,12 @@ export default function App() {
     [focusedGraphEdges, themeMode],
   );
   const hasSnapshot = Boolean(snapshot);
+  const startupStatus = useWatcherStatus(status === 'connected' && !hasSnapshot);
+  const degraded = useMemo(
+    () => degradedResources(snapshot ? snapshot.health : healthFromStatus(startupStatus)),
+    [snapshot, startupStatus],
+  );
+  const isDegraded = degraded.length > 0;
   const hasTopology = Boolean(snapshot && snapshot.nodes.length > 0);
   const topologySummary = useMemo(() => summarizeKinds(nodes), [nodes]);
   const summary = snapshot?.inventory ?? topologySummary;
@@ -228,6 +228,10 @@ export default function App() {
 
   const emptyStateDescription = useMemo(() => {
     if (!hasSnapshot) {
+      const unsynced = startupStatus?.unsynced ?? [];
+      if (unsynced.length > 0) {
+        return `Waiting for Kubernetes caches: ${unsynced.join(', ')}. Check pod logs, /api/status, and read-only RBAC for these resources.`;
+      }
       return 'If this stays here, check pod logs and read-only RBAC for ingresses, services, pods, endpointslices, endpoints, and ingressclasses.';
     }
     if (graphReady && filteredRoutes.length > 0 && !selectedHostGroup) {
@@ -239,7 +243,7 @@ export default function App() {
         : 'Search by host, resource, service, path, or namespace to find a traffic route.';
     }
     return 'The cluster may be empty for watched resources, or NorthScope may not have permission to list them.';
-  }, [filteredRoutes.length, graphReady, hasSnapshot, hasTopology, namespace, selectedHostGroup]);
+  }, [filteredRoutes.length, graphReady, hasSnapshot, hasTopology, namespace, selectedHostGroup, startupStatus]);
 
   const selectNamespace = (value: string) => {
     setNamespace(value);
@@ -352,20 +356,23 @@ export default function App() {
               Expanded
             </button>
           </div>
+          {snapshot ? <SnapshotAge generatedAt={snapshot.generatedAt} version={snapshot.version} /> : null}
           <div
             data-testid="stream-status"
             className={`rounded-full px-3 py-1 text-xs font-bold ${
-              status === 'connected' && hasSnapshot
+              status === 'connected' && hasSnapshot && !isDegraded
                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200'
-                : status === 'connecting' || (status === 'connected' && !hasSnapshot)
+                : status === 'connecting' || status === 'connected'
                   ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-200'
                   : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200'
             }`}
           >
-            {statusLabel(status, hasSnapshot)}
+            {streamStatusLabel(status, hasSnapshot, isDegraded)}
           </div>
         </div>
       </header>
+
+      <HealthBanner resources={degraded} />
 
       <main className="flex min-h-0 flex-1">
         <aside className="flex w-[312px] max-w-[48vw] shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">

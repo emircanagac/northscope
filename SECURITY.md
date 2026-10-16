@@ -63,7 +63,7 @@ NorthScope can display internal topology metadata, including:
 
 Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. In default mode, inventory counters remain cluster-wide. With `watchNamespace` set, namespaced counters and routes are limited to that namespace while Node and class metadata remain cluster-scoped.
 
-NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, and websocket clients. Keep metrics access behind the same trusted boundary as the UI.
+NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, websocket clients, and per-resource watch health. `/api/status` and the UI health banner include the latest Kubernetes API error for degraded resources, which can name the NorthScope ServiceAccount and the API server address. Keep metrics and status access behind the same trusted boundary as the UI.
 
 Route health labels are derived from Kubernetes object status, backend references, ports, readiness, and endpoint data. They are not active network probes and must not be treated as proof that an application or external load balancer is reachable.
 
