@@ -2,7 +2,9 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -157,6 +159,65 @@ func TestWatcherSendsLatestSnapshotToReconnectedSubscriber(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected reconnected subscriber to receive latest snapshot")
+	}
+}
+
+func TestWatcherTagsSnapshotsWithProcessInstance(t *testing.T) {
+	newPublishingWatcher := func() *Watcher {
+		watcher, err := NewWatcherFromClient(fake.NewSimpleClientset(), time.Minute)
+		if err != nil {
+			t.Fatalf("create watcher: %v", err)
+		}
+
+		atomic.StoreUint32(&watcher.ready, 1)
+		call := 0
+		watcher.buildSnapshotFunc = func() (models.TopologySnapshot, error) {
+			call++
+			return models.TopologySnapshot{
+				GeneratedAt: time.Now().UTC(),
+				Nodes:       []models.Node{{ID: fmt.Sprintf("ingress-%d", call)}},
+			}, nil
+		}
+		return watcher
+	}
+
+	original := newPublishingWatcher()
+	original.rebuildAndPublish()
+	first := original.Latest()
+	original.rebuildAndPublish()
+	second := original.Latest()
+
+	if first.Instance == "" {
+		t.Fatal("expected snapshot to carry a process instance")
+	}
+	if second.Version != 2 {
+		t.Fatalf("expected second snapshot version 2, got %d", second.Version)
+	}
+	if second.Instance != first.Instance {
+		t.Fatalf("expected snapshots from one process to share instance %q, got %q", first.Instance, second.Instance)
+	}
+
+	restarted := newPublishingWatcher()
+	restarted.rebuildAndPublish()
+	afterRestart := restarted.Latest()
+
+	if afterRestart.Version != 1 {
+		t.Fatalf("expected restarted process to start at version 1, got %d", afterRestart.Version)
+	}
+	if afterRestart.Instance == "" || afterRestart.Instance == first.Instance {
+		t.Fatalf("expected restarted process to publish a new instance, got %q after %q", afterRestart.Instance, first.Instance)
+	}
+
+	payload, err := json.Marshal(afterRestart)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if decoded["instance"] != afterRestart.Instance {
+		t.Fatalf("expected JSON instance %q, got %#v", afterRestart.Instance, decoded["instance"])
 	}
 }
 
