@@ -229,6 +229,14 @@ func controllerNodeID(className string) string {
 	return nodeID(models.NodeKindController, "", className)
 }
 
+// gatewayClassControllerNodeID keeps GatewayClass controllers apart from
+// IngressClass controllers, which often share a class name (nginx, traefik,
+// istio). Object names cannot contain ":", so the prefixed ID cannot match an
+// IngressClass controller.
+func gatewayClassControllerNodeID(className string) string {
+	return nodeID(models.NodeKindController, "", "gatewayclass:"+className)
+}
+
 func loadBalancerNodeID(namespace, name string) string {
 	return nodeID(models.NodeKindLoadBalancer, namespace, name)
 }

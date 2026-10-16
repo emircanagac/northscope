@@ -1366,11 +1366,79 @@ func TestBuildTopologyGatewayAPIRouteToService(t *testing.T) {
 	assertNode(t, snapshot, routeID)
 	assertNode(t, snapshot, dnsID)
 	assertNode(t, snapshot, lbID)
-	assertEdge(t, snapshot, controllerNodeID("public"), gatewayID, "controls")
+	assertEdge(t, snapshot, gatewayClassControllerNodeID("public"), gatewayID, "controls")
 	assertEdge(t, snapshot, lbID, gatewayID, "fronts")
 	assertEdge(t, snapshot, dnsID, gatewayID, "resolves")
 	assertEdge(t, snapshot, gatewayID, routeID, "attaches")
 	assertEdge(t, snapshot, routeID, serviceID, "routes")
+}
+
+// ingress-nginx and NGINX Gateway Fabric both default to a class named nginx,
+// and traefik and istio reuse their names the same way. Each class must keep
+// its own controller node and edges.
+func TestBuildTopologySeparatesSameNamedIngressClassAndGatewayClassControllers(t *testing.T) {
+	className := "nginx"
+	snapshot := BuildTopologyWithResources(
+		[]*networkingv1.Ingress{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "web"},
+			Spec: networkingv1.IngressSpec{
+				IngressClassName: &className,
+				Rules:            []networkingv1.IngressRule{{Host: "web.example.com"}},
+			},
+		}},
+		[]*networkingv1.IngressClass{{
+			ObjectMeta: metav1.ObjectMeta{Name: className},
+			Spec:       networkingv1.IngressClassSpec{Controller: "k8s.io/ingress-nginx"},
+		}},
+		[]*corev1.Service{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "ingress-nginx", Name: "ingress-nginx-controller"},
+			Spec: corev1.ServiceSpec{
+				Type:  corev1.ServiceTypeNodePort,
+				Ports: []corev1.ServicePort{{Name: "http", Port: 80, NodePort: 30080}},
+			},
+		}},
+		nil,
+		nil,
+		[]ExternalResource{
+			{
+				Kind:       ExternalKindGatewayClass,
+				Name:       className,
+				Properties: map[string]string{"controllerName": "gateway.nginx.org/nginx-gateway-controller"},
+			},
+			{
+				Kind:      ExternalKindGateway,
+				Namespace: "default",
+				Name:      "edge",
+				ClassName: className,
+			},
+		},
+	)
+
+	ingressID := nodeID(models.NodeKindIngress, "default", "web")
+	gatewayID := gatewayNodeID("default", "edge")
+	nodePortID := nodePortNodeID("ingress-nginx", "ingress-nginx-controller", corev1.ServicePort{Name: "http", Port: 80})
+	ingressControllerID := controllerNodeID(className)
+	gatewayControllerID := gatewayClassControllerNodeID(className)
+
+	assertKindCount(t, snapshot, models.NodeKindController, 2)
+	for id, expected := range map[string]map[string]string{
+		ingressControllerID: {"source": "IngressClass", "className": className, "controller": "k8s.io/ingress-nginx"},
+		gatewayControllerID: {"source": "GatewayClass", "className": className, "controller": "gateway.nginx.org/nginx-gateway-controller"},
+	} {
+		controller := findNode(t, snapshot, id)
+		if controller.Data.Label != className || controller.Data.Name != className {
+			t.Fatalf("expected %s to be labeled %q, got %#v", id, className, controller.Data)
+		}
+		if !reflect.DeepEqual(controller.Data.Properties, expected) {
+			t.Fatalf("expected %s properties %#v, got %#v", id, expected, controller.Data.Properties)
+		}
+	}
+	assertEdge(t, snapshot, ingressControllerID, ingressID, "controls")
+	assertEdge(t, snapshot, gatewayControllerID, gatewayID, "controls")
+	assertNoEdge(t, snapshot, ingressControllerID, gatewayID, "controls")
+	assertNoEdge(t, snapshot, gatewayControllerID, ingressID, "controls")
+	assertEdge(t, snapshot, nodePortID, ingressControllerID, "forwards")
+	assertNoEdge(t, snapshot, nodePortID, gatewayControllerID, "forwards")
 }
 
 func TestBuildTopologyF5IngressLinkBalancesSelectedService(t *testing.T) {

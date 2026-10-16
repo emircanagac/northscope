@@ -122,17 +122,21 @@ func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route i
 }
 
 func (b *topologyBuilder) addController(className, controller string) {
-	b.addControllerNode(className, controller, "IngressClass", "Configured")
+	b.addControllerNode(controllerNodeID(className), className, controller, "IngressClass", "Configured")
 }
 
 // addAnnotationController represents a class that is only referenced through
 // the deprecated Ingress annotation, which older controllers use without
 // creating IngressClass objects.
 func (b *topologyBuilder) addAnnotationController(className string) {
-	b.addControllerNode(className, "", legacyIngressClassAnnotation+" annotation", "Inferred")
+	b.addControllerNode(controllerNodeID(className), className, "", legacyIngressClassAnnotation+" annotation", "Inferred")
 }
 
-func (b *topologyBuilder) addControllerNode(className, controller, source, status string) {
+func (b *topologyBuilder) addGatewayClassController(className, controller string) {
+	b.addControllerNode(gatewayClassControllerNodeID(className), className, controller, "GatewayClass", "Configured")
+}
+
+func (b *topologyBuilder) addControllerNode(id, className, controller, source, status string) {
 	properties := map[string]string{
 		"source": source,
 	}
@@ -144,7 +148,7 @@ func (b *topologyBuilder) addControllerNode(className, controller, source, statu
 	}
 
 	b.addNode(models.Node{
-		ID:   controllerNodeID(className),
+		ID:   id,
 		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      className,
@@ -408,13 +412,13 @@ func (b *topologyBuilder) addExternalResource(
 		if controller == "" {
 			controller = "GatewayClass"
 		}
-		b.addController(resource.Name, controller)
+		b.addGatewayClassController(resource.Name, controller)
 	case ExternalKindGateway:
 		b.addGateway(resource)
 		if resource.ClassName != "" {
 			classResource := ExternalResource{Kind: ExternalKindGatewayClass, Name: resource.ClassName}
 			if _, ok := externalResourcesByKey[externalResourceKey(classResource)]; ok {
-				b.addEdge(controllerNodeID(resource.ClassName), gatewayNodeID(resource.Namespace, resource.Name), "controls", "GatewayClass")
+				b.addEdge(gatewayClassControllerNodeID(resource.ClassName), gatewayNodeID(resource.Namespace, resource.Name), "controls", "GatewayClass")
 			}
 		}
 		for _, address := range resource.Addresses {
