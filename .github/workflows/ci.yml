@@ -371,13 +371,18 @@ jobs:
 
       - name: Merge existing chart index
         run: |
+          merge_args=()
           if git ls-remote --exit-code --heads origin gh-pages; then
             git fetch origin gh-pages --depth=1
-            git show origin/gh-pages:index.yaml > .helm-repo/index.yaml || true
+            # A new or reset gh-pages branch may have no index yet; only merge
+            # an existing, non-empty index.
+            if git show origin/gh-pages:index.yaml > "$RUNNER_TEMP/index.yaml" 2>/dev/null && [ -s "$RUNNER_TEMP/index.yaml" ]; then
+              merge_args=(--merge "$RUNNER_TEMP/index.yaml")
+            fi
           fi
           helm repo index .helm-repo \
             --url https://emircanagac.github.io/northscope \
-            --merge .helm-repo/index.yaml
+            "${merge_args[@]}"
 
       - name: Add chart repository landing page
         run: |
