@@ -1,6 +1,59 @@
 apiVersion: v1
 entries:
   northscope:
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: added
+          description: Chart README, logo, and Artifact Hub metadata
+        - kind: added
+          description: values.schema.json validates chart values and documents them in Artifact Hub
+      artifacthub.io/images: |
+        - name: northscope
+          image: ghcr.io/emircanagac/northscope:1.1.1
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/emircanagac/northscope#readme
+        - name: Production access
+          url: https://github.com/emircanagac/northscope/blob/main/docs/production-access.md
+        - name: Troubleshooting
+          url: https://github.com/emircanagac/northscope/blob/main/docs/troubleshooting.md
+        - name: Security policy
+          url: https://github.com/emircanagac/northscope/blob/main/SECURITY.md
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/screenshots: |
+        - title: Traffic path for a host, light theme
+          url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-light.png
+        - title: Traffic path for a host, dark theme
+          url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
+    apiVersion: v2
+    appVersion: 1.1.1
+    created: "2026-10-16T22:42:38.789219334Z"
+    description: Read-only Kubernetes traffic map that shows how every host enters
+      your cluster, from load balancer and ingress controller to Pods.
+    digest: 8c603bd6b90340570bcd51541020e1818397e1c79441988bb48ce2b97dfde9c4
+    home: https://github.com/emircanagac/northscope
+    icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
+    keywords:
+    - kubernetes
+    - ingress
+    - gateway-api
+    - topology
+    - traffic
+    - debugging
+    - observability
+    kubeVersion: '>=1.20.0-0'
+    maintainers:
+    - name: Emircan Agac
+      url: https://github.com/emircanagac
+    name: northscope
+    sources:
+    - https://github.com/emircanagac/northscope
+    type: application
+    urls:
+    - https://emircanagac.github.io/northscope/northscope-1.1.1.tgz
+    version: 1.1.1
   - apiVersion: v2
     appVersion: 1.1.0
     created: "2026-10-16T17:54:05.479942579Z"
@@ -45,4 +98,4 @@ entries:
     urls:
     - https://emircanagac.github.io/northscope/northscope-1.0.0.tgz
     version: 1.0.0
-generated: "2026-10-16T17:54:05.478162611Z"
+generated: "2026-10-16T22:42:38.787931646Z"
