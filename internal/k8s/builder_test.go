@@ -2,6 +2,8 @@ package k8s
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1545,6 +1547,341 @@ func TestBuildTopologyAddsIngressTLSMetadataWithoutSecretContents(t *testing.T) 
 	if ingress.Data.Properties["tlsSecrets"] != "api-cert, edge-cert" {
 		t.Fatalf("unexpected TLS Secret names: %#v", ingress.Data.Properties)
 	}
+}
+
+// Informer listers return objects in map order, so the same cluster state must
+// build the same snapshot regardless of input order. Otherwise every rebuild is
+// published to every WebSocket client.
+func TestBuildTopologyIgnoresInputOrder(t *testing.T) {
+	inputs := orderTestInputs()
+	baseline := inputs.build()
+
+	for _, kind := range []models.NodeKind{
+		models.NodeKindDNS,
+		models.NodeKindLoadBalancer,
+		models.NodeKindNodePort,
+		models.NodeKindNode,
+		models.NodeKindController,
+		models.NodeKindGateway,
+		models.NodeKindIngress,
+		models.NodeKindRoute,
+		models.NodeKindService,
+		models.NodeKindEndpoint,
+		models.NodeKindEndpointSlice,
+		models.NodeKindPod,
+	} {
+		rows := 0
+		for _, node := range baseline.Nodes {
+			if node.Data.Kind != kind {
+				continue
+			}
+			expected := models.Position{X: kindColumn(kind), Y: float64(rows * 140)}
+			if node.Position != expected {
+				t.Fatalf("expected %s at %#v, got %#v", node.ID, expected, node.Position)
+			}
+			rows++
+		}
+		if rows < 2 {
+			t.Fatalf("expected at least two %s nodes to exercise ordering, got %d", kind, rows)
+		}
+	}
+
+	for seed := uint64(0); seed < 50; seed++ {
+		rng := rand.New(rand.NewPCG(seed, seed))
+		shuffled := topologyOrderInputs{
+			ingresses:         shuffledCopy(rng, inputs.ingresses),
+			ingressClasses:    shuffledCopy(rng, inputs.ingressClasses),
+			services:          shuffledCopy(rng, inputs.services),
+			pods:              shuffledCopy(rng, inputs.pods),
+			nodes:             shuffledCopy(rng, inputs.nodes),
+			externalResources: shuffledCopy(rng, inputs.externalResources),
+			endpoints:         shuffledCopy(rng, inputs.endpoints),
+			endpointSlices:    shuffledCopy(rng, inputs.endpointSlices),
+		}
+		snapshot := shuffled.build()
+		if !sameTopology(baseline, snapshot) {
+			t.Fatalf("seed %d: shuffled inputs changed the topology: %s", seed, topologyDifference(baseline, snapshot))
+		}
+	}
+}
+
+type topologyOrderInputs struct {
+	ingresses         []*networkingv1.Ingress
+	ingressClasses    []*networkingv1.IngressClass
+	services          []*corev1.Service
+	pods              []*corev1.Pod
+	nodes             []*corev1.Node
+	externalResources []ExternalResource
+	endpoints         []*corev1.Endpoints
+	endpointSlices    []*discoveryv1.EndpointSlice
+}
+
+func (inputs topologyOrderInputs) build() models.TopologySnapshot {
+	return BuildTopologyWithResourcesAndEndpoints(
+		inputs.ingresses,
+		inputs.ingressClasses,
+		inputs.services,
+		inputs.pods,
+		inputs.nodes,
+		inputs.externalResources,
+		inputs.endpoints,
+		inputs.endpointSlices,
+	)
+}
+
+func orderTestInputs() topologyOrderInputs {
+	ready := true
+	nginx := "nginx"
+	traefik := "traefik"
+	prefix := pathTypePtr(networkingv1.PathTypePrefix)
+	path := func(value, service string, port networkingv1.ServiceBackendPort) networkingv1.HTTPIngressPath {
+		return networkingv1.HTTPIngressPath{
+			Path:     value,
+			PathType: prefix,
+			Backend: networkingv1.IngressBackend{
+				Service: &networkingv1.IngressServiceBackend{Name: service, Port: port},
+			},
+		}
+	}
+	rule := func(host string, paths ...networkingv1.HTTPIngressPath) networkingv1.IngressRule {
+		return networkingv1.IngressRule{
+			Host:             host,
+			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: paths}},
+		}
+	}
+	httpPort := networkingv1.ServiceBackendPort{Name: "http"}
+	port80 := networkingv1.ServiceBackendPort{Number: 80}
+	pod := func(namespace, name, ip, node string, labels map[string]string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Labels: labels},
+			Spec:       corev1.PodSpec{NodeName: node},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip},
+		}
+	}
+	readyNode := func(name string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+			},
+		}
+	}
+	endpointSlice := func(name, service string, addresses ...string) *discoveryv1.EndpointSlice {
+		endpoints := make([]discoveryv1.Endpoint, 0, len(addresses))
+		for _, address := range addresses {
+			endpoints = append(endpoints, discoveryv1.Endpoint{
+				Addresses:  []string{address},
+				Conditions: discoveryv1.EndpointConditions{Ready: &ready},
+			})
+		}
+		return &discoveryv1.EndpointSlice{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "shop",
+				Name:      name,
+				Labels:    map[string]string{discoveryv1.LabelServiceName: service},
+			},
+			AddressType: discoveryv1.AddressTypeIPv4,
+			Endpoints:   endpoints,
+		}
+	}
+
+	return topologyOrderInputs{
+		ingresses: []*networkingv1.Ingress{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: &nginx,
+					TLS:              []networkingv1.IngressTLS{{Hosts: []string{"www.example.com"}, SecretName: "web-tls"}},
+					Rules:            []networkingv1.IngressRule{rule("www.example.com", path("/", "web", httpPort))},
+				},
+				Status: networkingv1.IngressStatus{LoadBalancer: networkingv1.IngressLoadBalancerStatus{
+					Ingress: []networkingv1.IngressLoadBalancerIngress{{IP: "203.0.113.10"}},
+				}},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: &nginx,
+					Rules: []networkingv1.IngressRule{rule(
+						"api.example.com",
+						path("/v1", "api", port80),
+						path("/legacy", "legacy", port80),
+						path("/db", "external", networkingv1.ServiceBackendPort{Number: 5432}),
+						path("/docs", "docs", port80),
+					)},
+				},
+				Status: networkingv1.IngressStatus{LoadBalancer: networkingv1.IngressLoadBalancerStatus{
+					Ingress: []networkingv1.IngressLoadBalancerIngress{{Hostname: "edge.example.net"}},
+				}},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "admin"},
+				Spec: networkingv1.IngressSpec{
+					IngressClassName: &traefik,
+					Rules:            []networkingv1.IngressRule{rule("www.example.com", path("/admin", "web", httpPort))},
+				},
+			},
+			annotatedIngress("old", "haproxy"),
+		},
+		ingressClasses: []*networkingv1.IngressClass{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: nginx},
+				Spec:       networkingv1.IngressClassSpec{Controller: "k8s.io/ingress-nginx"},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: traefik},
+				Spec:       networkingv1.IngressClassSpec{Controller: "traefik.io/ingress-controller"},
+			},
+		},
+		services: []*corev1.Service{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "web"},
+					Ports:    []corev1.ServicePort{{Name: "http", Port: 80}},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "api"},
+					Ports:    []corev1.ServicePort{{Port: 80}},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "legacy"},
+				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "external"},
+				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 5432}}},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "docs"},
+				Spec: corev1.ServiceSpec{
+					Type:         corev1.ServiceTypeExternalName,
+					ExternalName: "docs.example.org",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "files"},
+				Spec: corev1.ServiceSpec{
+					Type:         corev1.ServiceTypeExternalName,
+					ExternalName: "files.example.org",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "ingress-nginx",
+					Name:      "ingress-nginx-controller",
+					Labels:    map[string]string{"app.kubernetes.io/component": "controller"},
+				},
+				Spec: corev1.ServiceSpec{
+					Type:     corev1.ServiceTypeLoadBalancer,
+					Selector: map[string]string{"app.kubernetes.io/name": "ingress-nginx"},
+					Ports: []corev1.ServicePort{
+						{Name: "http", Port: 80, NodePort: 30080},
+						{Name: "https", Port: 443, NodePort: 30443},
+					},
+				},
+				Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{
+					Ingress: []corev1.LoadBalancerIngress{{IP: "198.51.100.7"}},
+				}},
+			},
+		},
+		pods: []*corev1.Pod{
+			pod("shop", "web-1", "10.0.1.11", "node-a", map[string]string{"app": "web"}),
+			pod("shop", "web-2", "10.0.1.12", "node-b", map[string]string{"app": "web"}),
+			pod("shop", "api-1", "10.0.1.21", "node-a", map[string]string{"app": "api"}),
+			pod("shop", "db-1", "10.0.2.5", "node-b", nil),
+			pod("ingress-nginx", "ingress-nginx-controller-abc", "10.0.3.2", "node-b", map[string]string{"app.kubernetes.io/name": "ingress-nginx"}),
+		},
+		nodes: []*corev1.Node{readyNode("node-a"), readyNode("node-b")},
+		externalResources: []ExternalResource{
+			{
+				Kind:       ExternalKindGatewayClass,
+				Name:       "public",
+				Properties: map[string]string{"controllerName": "example.com/gateway-controller"},
+			},
+			{
+				Kind:       ExternalKindGatewayClass,
+				Name:       "internal",
+				Properties: map[string]string{"controllerName": "example.com/internal-controller"},
+			},
+			{
+				Kind:      ExternalKindGateway,
+				Namespace: "shop",
+				Name:      "edge",
+				ClassName: "public",
+				Addresses: []string{"203.0.113.20"},
+				Hostnames: []string{"api.example.com"},
+			},
+			{
+				Kind:      ExternalKindGateway,
+				Namespace: "shop",
+				Name:      "internal",
+				ClassName: "internal",
+			},
+			{
+				Kind:       ExternalKindHTTPRoute,
+				Namespace:  "shop",
+				Name:       "api",
+				Hostnames:  []string{"api.example.com"},
+				ParentRefs: []ExternalParentRef{{Kind: "Gateway", Name: "edge"}},
+				Backends:   []ExternalBackendRef{{Name: "api", Port: "80"}},
+			},
+			{
+				Kind:       ExternalKindHTTPRoute,
+				Namespace:  "shop",
+				Name:       "orphan",
+				ParentRefs: []ExternalParentRef{{Kind: "Gateway", Name: "missing"}},
+				Backends:   []ExternalBackendRef{{Name: "web", Port: "80"}},
+			},
+			{
+				Kind:      ExternalKindF5Virtual,
+				Namespace: "shop",
+				Name:      "vs",
+				Addresses: []string{"198.51.100.30"},
+				Hostnames: []string{"shop.example.com"},
+				Backends:  []ExternalBackendRef{{Name: "web"}},
+			},
+		},
+		endpoints: []*corev1.Endpoints{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "legacy"},
+			Subsets: []corev1.EndpointSubset{{
+				Addresses: []corev1.EndpointAddress{{IP: "192.0.2.80"}, {IP: "192.0.2.81"}},
+			}},
+		}},
+		endpointSlices: []*discoveryv1.EndpointSlice{
+			endpointSlice("external-a", "external", "10.0.2.5", "192.0.2.40"),
+			endpointSlice("external-b", "external", "192.0.2.41"),
+		},
+	}
+}
+
+func shuffledCopy[T any](rng *rand.Rand, items []T) []T {
+	shuffled := append([]T(nil), items...)
+	rng.Shuffle(len(shuffled), func(i, j int) {
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	})
+	return shuffled
+}
+
+func topologyDifference(left, right models.TopologySnapshot) string {
+	if len(left.Nodes) != len(right.Nodes) || len(left.Edges) != len(right.Edges) {
+		return fmt.Sprintf("%d nodes/%d edges vs %d nodes/%d edges", len(left.Nodes), len(left.Edges), len(right.Nodes), len(right.Edges))
+	}
+	for i := range left.Nodes {
+		if !reflect.DeepEqual(left.Nodes[i], right.Nodes[i]) {
+			return fmt.Sprintf("node %#v vs %#v", left.Nodes[i], right.Nodes[i])
+		}
+	}
+	for i := range left.Edges {
+		if !reflect.DeepEqual(left.Edges[i], right.Edges[i]) {
+			return fmt.Sprintf("edge %#v vs %#v", left.Edges[i], right.Edges[i])
+		}
+	}
+	return "inventory differs"
 }
 
 func assertNode(t *testing.T, snapshot models.TopologySnapshot, id string) {

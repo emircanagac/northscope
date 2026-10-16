@@ -6,7 +6,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
-No unreleased changes.
+- Fixed rebuilds of unchanged cluster state republishing the whole topology to every WebSocket client: node positions no longer depend on informer list order.
 
 ## 1.0.0 - 2026-10-16
 

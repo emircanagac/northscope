@@ -13,16 +13,14 @@ import (
 )
 
 type topologyBuilder struct {
-	nodesByID  map[string]models.Node
-	edgesByID  map[string]models.Edge
-	nextColumn map[models.NodeKind]int
+	nodesByID map[string]models.Node
+	edgesByID map[string]models.Edge
 }
 
 func newTopologyBuilder() *topologyBuilder {
 	return &topologyBuilder{
-		nodesByID:  make(map[string]models.Node),
-		edgesByID:  make(map[string]models.Edge),
-		nextColumn: make(map[models.NodeKind]int),
+		nodesByID: make(map[string]models.Node),
+		edgesByID: make(map[string]models.Edge),
 	}
 }
 
@@ -54,9 +52,8 @@ func (b *topologyBuilder) addIngress(ingress *networkingv1.Ingress) {
 	}
 
 	b.addNode(models.Node{
-		ID:       nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindIngress),
+		ID:   nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      displayName(ingress.Namespace, ingress.Name),
 			Kind:       models.NodeKindIngress,
@@ -111,9 +108,8 @@ func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route i
 	}
 
 	b.addNode(models.Node{
-		ID:       ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindRoute),
+		ID:   ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      route.Name(),
 			Kind:       models.NodeKindRoute,
@@ -148,9 +144,8 @@ func (b *topologyBuilder) addControllerNode(className, controller, source, statu
 	}
 
 	b.addNode(models.Node{
-		ID:       controllerNodeID(className),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindController),
+		ID:   controllerNodeID(className),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      className,
 			Kind:       models.NodeKindController,
@@ -177,9 +172,8 @@ func (b *topologyBuilder) addService(service *corev1.Service) {
 	}
 
 	b.addNode(models.Node{
-		ID:       nodeID(models.NodeKindService, service.Namespace, service.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindService),
+		ID:   nodeID(models.NodeKindService, service.Namespace, service.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      displayName(service.Namespace, service.Name),
 			Kind:       models.NodeKindService,
@@ -204,9 +198,8 @@ func (b *topologyBuilder) addLoadBalancer(service *corev1.Service) {
 	}
 
 	b.addNode(models.Node{
-		ID:       loadBalancerNodeID(service.Namespace, service.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindLoadBalancer),
+		ID:   loadBalancerNodeID(service.Namespace, service.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      displayName(service.Namespace, service.Name),
 			Kind:       models.NodeKindLoadBalancer,
@@ -237,9 +230,8 @@ func (b *topologyBuilder) addNodePort(service *corev1.Service, port corev1.Servi
 	}
 
 	b.addNode(models.Node{
-		ID:       nodePortNodeID(service.Namespace, service.Name, port),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindNodePort),
+		ID:   nodePortNodeID(service.Namespace, service.Name, port),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      nodePortLabel(service, port),
 			Kind:       models.NodeKindNodePort,
@@ -269,9 +261,8 @@ func (b *topologyBuilder) addKubernetesNode(node *corev1.Node) {
 	}
 
 	b.addNode(models.Node{
-		ID:       nodeID(models.NodeKindNode, "", node.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindNode),
+		ID:   nodeID(models.NodeKindNode, "", node.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      node.Name,
 			Kind:       models.NodeKindNode,
@@ -293,9 +284,8 @@ func (b *topologyBuilder) addPod(pod *corev1.Pod) {
 	}
 
 	b.addNode(models.Node{
-		ID:       nodeID(models.NodeKindPod, pod.Namespace, pod.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindPod),
+		ID:   nodeID(models.NodeKindPod, pod.Namespace, pod.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      displayName(pod.Namespace, pod.Name),
 			Kind:       models.NodeKindPod,
@@ -336,9 +326,8 @@ func (b *topologyBuilder) addExternalEndpoint(endpointSlice *discoveryv1.Endpoin
 	}
 
 	b.addNode(models.Node{
-		ID:       endpointNodeID(endpointSlice.Namespace, serviceName, endpointSlice.Name, address),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindEndpointSlice),
+		ID:   endpointNodeID(endpointSlice.Namespace, serviceName, endpointSlice.Name, address),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      address,
 			Kind:       models.NodeKindEndpointSlice,
@@ -370,9 +359,8 @@ func (b *topologyBuilder) addLegacyEndpoint(endpoints *corev1.Endpoints, address
 	}
 
 	b.addNode(models.Node{
-		ID:       legacyEndpointNodeID(endpoints.Namespace, endpoints.Name, address.Address.IP),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindEndpoint),
+		ID:   legacyEndpointNodeID(endpoints.Namespace, endpoints.Name, address.Address.IP),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      address.Address.IP,
 			Kind:       models.NodeKindEndpoint,
@@ -395,9 +383,8 @@ func (b *topologyBuilder) addExternalNameEndpoint(service *corev1.Service) {
 	}
 
 	b.addNode(models.Node{
-		ID:       externalNameNodeID(service.Namespace, service.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindEndpoint),
+		ID:   externalNameNodeID(service.Namespace, service.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      service.Spec.ExternalName,
 			Kind:       models.NodeKindEndpoint,
@@ -539,9 +526,8 @@ func (b *topologyBuilder) addGateway(resource ExternalResource) {
 	}
 
 	b.addNode(models.Node{
-		ID:       gatewayNodeID(resource.Namespace, resource.Name),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindGateway),
+		ID:   gatewayNodeID(resource.Namespace, resource.Name),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      displayName(resource.Namespace, resource.Name),
 			Kind:       models.NodeKindGateway,
@@ -563,9 +549,8 @@ func (b *topologyBuilder) addRoute(resource ExternalResource) {
 	}
 
 	b.addNode(models.Node{
-		ID:       routeNodeID(resource.Namespace, resource.Name, string(resource.Kind)),
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindRoute),
+		ID:   routeNodeID(resource.Namespace, resource.Name, string(resource.Kind)),
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      displayName(resource.Namespace, resource.Name),
 			Kind:       models.NodeKindRoute,
@@ -642,9 +627,8 @@ func (b *topologyBuilder) addDNS(hostname, targetID string) {
 	}
 	dnsID := nodeID(models.NodeKindDNS, "", hostname)
 	b.addNode(models.Node{
-		ID:       dnsID,
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindDNS),
+		ID:   dnsID,
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label: hostname,
 			Kind:  models.NodeKindDNS,
@@ -663,9 +647,8 @@ func (b *topologyBuilder) addExternalLoadBalancer(id, label, address, namespace,
 	}
 
 	b.addNode(models.Node{
-		ID:       id,
-		Type:     "northscopeNode",
-		Position: b.nextPosition(models.NodeKindLoadBalancer),
+		ID:   id,
+		Type: "northscopeNode",
 		Data: models.NodeData{
 			Label:      labelOrDefault(label, displayName(namespace, name)),
 			Kind:       models.NodeKindLoadBalancer,
@@ -704,6 +687,7 @@ func (b *topologyBuilder) nodes() []models.Node {
 	sort.Slice(nodes, func(i, j int) bool {
 		return nodes[i].ID < nodes[j].ID
 	})
+	assignPositions(nodes)
 	return nodes
 }
 
@@ -718,12 +702,19 @@ func (b *topologyBuilder) edges() []models.Edge {
 	return edges
 }
 
-func (b *topologyBuilder) nextPosition(kind models.NodeKind) models.Position {
-	row := b.nextColumn[kind]
-	b.nextColumn[kind]++
-
-	return models.Position{
-		X: kindColumn(kind),
-		Y: float64(row * 140),
+// assignPositions places each node in its kind's column, one row per node in ID
+// order; nodes must already be sorted by ID. Positions are assigned after the
+// build, not as nodes are added, because informer listers return objects in
+// random order and sameTopology compares positions to decide whether a rebuild
+// is published.
+func assignPositions(nodes []models.Node) {
+	rows := make(map[models.NodeKind]int)
+	for i := range nodes {
+		kind := nodes[i].Data.Kind
+		nodes[i].Position = models.Position{
+			X: kindColumn(kind),
+			Y: float64(rows[kind] * 140),
+		}
+		rows[kind]++
 	}
 }
