@@ -173,7 +173,7 @@ NorthScope does not guess ownership from an arbitrary NodePort Service.
 Older controllers often rely on the deprecated `kubernetes.io/ingress.class` annotation without creating IngressClass objects. When an annotation names a class that has no IngressClass object, NorthScope shows an `Inferred` controller for that class name and matches controller Services by name and labels. Create an IngressClass object when you want ownership to be explicit.
 ## Optional Gateway API Or F5 Objects Are Missing
 
-Gateway API and F5 CIS resources are optional. NorthScope only watches those resources when their CRDs are installed, discoverable, and enabled in Helm values.
+Gateway API and F5 CIS resources are optional. NorthScope only watches those resources when their CRDs are installed, discoverable, and enabled in Helm values. It checks for served CRDs every 2 minutes, so a CRD installed, removed, or upgraded to a new preferred version after startup is picked up without a restart.
 
 ```bash
 kubectl get crd | grep -E 'gateway.networking.k8s.io|cis.f5.com'

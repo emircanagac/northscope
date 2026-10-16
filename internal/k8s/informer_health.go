@@ -67,6 +67,14 @@ func (h *informerHealth) track(resource string, informer cache.SharedIndexInform
 
 // listWatch wraps a resource's list and watch calls so that every successful
 // list, watch start, and watch event refreshes its last success time.
+// untrack forgets a resource whose informer was stopped, for example after its
+// CRD was removed.
+func (h *informerHealth) untrack(resource string) {
+	h.mu.Lock()
+	delete(h.resources, resource)
+	h.mu.Unlock()
+}
+
 func (h *informerHealth) listWatch(
 	resource string,
 	list func(context.Context, metav1.ListOptions) (runtime.Object, error),

@@ -1,18 +1,13 @@
 package k8s
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 )
 
 type optionalResource struct {
@@ -42,37 +37,6 @@ var optionalTopologyResources = []optionalResource{
 	{gvr: schema.GroupVersionResource{Group: "cis.f5.com", Version: "v1", Resource: "transportservers"}, scope: "namespace", kind: ExternalKindF5Transport},
 }
 
-func listOptionalExternalResources(
-	ctx context.Context,
-	client dynamic.Interface,
-	availableGVRs map[schema.GroupVersionResource]struct{},
-	namespace string,
-) ([]ExternalResource, bool) {
-	if client == nil {
-		return nil, true
-	}
-
-	var resources []ExternalResource
-	complete := true
-	for _, item := range preferredOptionalResources(availableGVRs) {
-		list, err := listOptionalResource(ctx, client, item, namespace)
-		if err != nil {
-			if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
-				continue
-			}
-			log.Printf("list optional topology resource %s failed: %v", item.gvr.String(), err)
-			complete = false
-			continue
-		}
-		for i := range list.Items {
-			if resource, ok := externalResourceFromUnstructured(&list.Items[i], item.kind, item.gvr.GroupVersion().String()); ok {
-				resources = append(resources, resource)
-			}
-		}
-	}
-	return resources, complete
-}
-
 func preferredOptionalResources(availableGVRs map[schema.GroupVersionResource]struct{}) []optionalResource {
 	selected := make([]optionalResource, 0, len(optionalTopologyResources))
 	seen := make(map[string]struct{})
@@ -92,12 +56,6 @@ func preferredOptionalResources(availableGVRs map[schema.GroupVersionResource]st
 	return selected
 }
 
-func listOptionalResource(ctx context.Context, client dynamic.Interface, item optionalResource, namespace string) (*unstructured.UnstructuredList, error) {
-	if item.scope == "cluster" {
-		return client.Resource(item.gvr).List(ctx, metav1.ListOptions{})
-	}
-	return client.Resource(item.gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
-}
 
 func externalResourceFromUnstructured(obj *unstructured.Unstructured, kind ExternalResourceKind, apiVersion string) (ExternalResource, bool) {
 	resource := ExternalResource{
