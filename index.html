@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>NorthScope Helm Chart Repository</title>
+  <meta name="description" content="Helm chart repository for NorthScope, a read-only Kubernetes traffic topology debugger for Ingress, Gateway API, Services, and Pods.">
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      margin: 0;
+      background: #161819;
+      color: #d8d8d8;
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    .page {
+      max-width: 46em;
+      margin: 0 auto;
+      padding: 0 1em 2em;
+    }
+    header {
+      border-bottom: 1px solid #3d4144;
+      padding: 1.5em 0 0.75em;
+    }
+    h1,
+    h2 {
+      color: #f2f2f2;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 2em;
+      line-height: 1.2;
+    }
+    .tagline {
+      margin: 0.2em 0 0.8em;
+      color: #a8adb0;
+      font-size: 1.1em;
+    }
+    nav a {
+      margin-right: 0.35em;
+    }
+    nav span {
+      margin-right: 0.35em;
+      color: #6f7477;
+    }
+    h2 {
+      margin: 1.8em 0 0.6em;
+      padding-bottom: 0.2em;
+      border-bottom: 1px solid #33373a;
+      font-size: 1.35em;
+    }
+    a {
+      color: #7fb2f0;
+    }
+    a:visited {
+      color: #b39ddb;
+    }
+    code,
+    pre {
+      font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    }
+    code {
+      padding: 0.1em 0.3em;
+      border: 1px solid #3a3e41;
+      background: #202325;
+      font-size: 0.9em;
+    }
+    pre {
+      overflow-x: auto;
+      padding: 0.75em 1em;
+      border: 1px solid #3a3e41;
+      background: #202325;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    pre code {
+      padding: 0;
+      border: 0;
+      background: none;
+      font-size: inherit;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      border-collapse: collapse;
+      margin: 0.5em 0 1em;
+    }
+    th,
+    td {
+      padding: 0.35em 0.75em;
+      border: 1px solid #3d4144;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      background: #24272a;
+    }
+    .notice {
+      padding: 0.6em 0.9em;
+      border: 1px solid #6b5d20;
+      background: #2a2512;
+      color: #eee3b8;
+    }
+    footer {
+      margin-top: 2.5em;
+      padding-top: 0.75em;
+      border-top: 1px solid #3d4144;
+      color: #8f9497;
+      font-size: 0.875em;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>NorthScope</h1>
+      <p class="tagline">Read-only Kubernetes traffic topology debugger</p>
+      <nav>
+        <a href="https://github.com/emircanagac/northscope">Source code</a><span>|</span>
+        <a href="https://github.com/emircanagac/northscope#readme">Documentation</a><span>|</span>
+        <a href="https://github.com/emircanagac/northscope/blob/main/docs/troubleshooting.md">Troubleshooting</a><span>|</span>
+        <a href="https://github.com/emircanagac/northscope/releases">Releases</a><span>|</span>
+        <a href="https://github.com/emircanagac/northscope/issues">Issues</a>
+      </nav>
+    </header>
+
+    <p>
+      This is the Helm chart repository for NorthScope. NorthScope follows a host's configured
+      route from the load balancer and ingress controller through Ingress or Gateway API routes,
+      Services, and endpoints to Pods, and points out missing Services, wrong backend ports, and
+      backends without ready endpoints.
+    </p>
+    <p>
+      NorthScope only reads Kubernetes configuration. It does not capture traffic or test
+      connectivity. See the <a href="https://github.com/emircanagac/northscope#readme">README</a>
+      for a screenshot of the topology view.
+    </p>
+
+    <h2 id="install">Install</h2>
+    <p>Add the chart repository and install the latest release:</p>
+    <pre><code>helm repo add northscope https://emircanagac.github.io/northscope
+helm repo update
+helm upgrade --install northscope northscope/northscope \
+  --namespace northscope \
+  --create-namespace</code></pre>
+    <p>Open the UI through a port-forward and sign in as <code>admin</code> with the generated password, then search for and select a host route:</p>
+    <pre><code>kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl -n northscope port-forward svc/northscope 18080:80
+# http://localhost:18080</code></pre>
+    <p>
+      For Ingress access, TLS, and other options, see the
+      <a href="https://github.com/emircanagac/northscope/blob/main/charts/northscope/values.yaml">chart values</a>
+      and the
+      <a href="https://github.com/emircanagac/northscope/blob/main/docs/production-access.md">production access guide</a>.
+    </p>
+
+    <h2 id="requirements">Requirements</h2>
+    <ul>
+      <li>Kubernetes 1.20 or newer</li>
+      <li>Helm 3</li>
+      <li>Read-only cluster access (<code>get</code>, <code>list</code>, <code>watch</code>); NorthScope does not read Secrets or Pod logs</li>
+    </ul>
+
+    <h2 id="downloads">Downloads</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Chart version</th>
+            <th>App version</th>
+            <th>Package</th>
+            <th>Checksum</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1.0.0 (latest)</td>
+            <td>1.0.0</td>
+            <td><a href="northscope-1.0.0.tgz">northscope-1.0.0.tgz</a></td>
+            <td><a href="northscope-1.0.0.tgz.sha256">SHA-256</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      All chart versions are listed in <a href="index.yaml">index.yaml</a>. Release notes are in the
+      <a href="https://github.com/emircanagac/northscope/blob/main/CHANGELOG.md">changelog</a>.
+      To verify a downloaded package:
+    </p>
+    <pre><code>curl -LO https://emircanagac.github.io/northscope/northscope-1.0.0.tgz
+curl -LO https://emircanagac.github.io/northscope/northscope-1.0.0.tgz.sha256
+sha256sum -c northscope-1.0.0.tgz.sha256</code></pre>
+
+    <h2 id="status">Project status</h2>
+    <p class="notice">
+      NorthScope is an early preview (pre-beta). Topology data includes internal hostnames and IP
+      addresses, so protect access to the UI. Bug reports and feedback from real clusters are welcome on the
+      <a href="https://github.com/emircanagac/northscope/issues">issue tracker</a>. Report security
+      issues privately as described in the
+      <a href="https://github.com/emircanagac/northscope/blob/main/SECURITY.md">security policy</a>.
+    </p>
+
+    <footer>
+      NorthScope is open source software licensed under the
+      <a href="https://github.com/emircanagac/northscope/blob/main/LICENSE">Apache License 2.0</a>.
+    </footer>
+  </div>
+</body>
+</html>
