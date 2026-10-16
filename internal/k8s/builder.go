@@ -229,7 +229,12 @@ func BuildTopologyWithOptions(
 			svc := servicesByKey[namespacedKey(ingress.Namespace, route.ServiceName)]
 			pods := servicePodsCache[namespacedKey(ingress.Namespace, route.ServiceName)]
 			serviceKey := namespacedKey(ingress.Namespace, route.ServiceName)
-			nonEndpointPods := countNonEndpointPods(pods, endpointPodsByServiceKey[serviceKey])
+			nonEndpointPods := 0
+			if svc != nil {
+				if portName, ok := servicePortName(svc, route.ServicePort); ok {
+					nonEndpointPods = countNonEndpointPods(pods, endpointPodsByServiceKey[serviceKey], portName)
+				}
+			}
 			diagnosis := diagnoseIngressRoute(ingress, route, controllerName, svc, pods, endpointStatsByService[serviceKey], nonEndpointPods)
 			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
 			builder.addIngressRoute(ingress, route, diagnosis)

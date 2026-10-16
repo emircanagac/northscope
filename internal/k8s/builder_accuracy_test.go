@@ -71,7 +71,18 @@ func runningPod(name, ip string) *corev1.Pod {
 	}
 }
 
+// apiEndpointSlice lists the Pods for the Service's unnamed port, like the
+// EndpointSlice controller does when the Pods expose the targetPort.
 func apiEndpointSlice(podNames ...string) *discoveryv1.EndpointSlice {
+	slice := apiEndpointSliceWithoutPorts(podNames...)
+	name, port := "", int32(8080)
+	slice.Ports = []discoveryv1.EndpointPort{{Name: &name, Port: &port}}
+	return slice
+}
+
+// apiEndpointSliceWithoutPorts lists the Pods with no ports, which is what the
+// EndpointSlice controller writes when the Pods lack a named targetPort.
+func apiEndpointSliceWithoutPorts(podNames ...string) *discoveryv1.EndpointSlice {
 	ready := true
 	slice := &discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
@@ -106,6 +117,12 @@ func TestBuildTopologyWarnsWhenSelectedPodsAreNotEndpoints(t *testing.T) {
 	route := findRouteNodeByBackend(t, partial, "api:80")
 	if route.Data.Status != "Warning" || !strings.Contains(route.Data.Properties["diagnosis"], "1 running Pod(s)") {
 		t.Fatalf("expected a warning for a selected Pod that is not an endpoint, got %q: %s", route.Data.Status, route.Data.Properties["diagnosis"])
+	}
+
+	missingPort := BuildTopology(ingresses, nil, []*corev1.Service{service}, pods, []*discoveryv1.EndpointSlice{apiEndpointSliceWithoutPorts("api-1", "api-2")})
+	route = findRouteNodeByBackend(t, missingPort, "api:80")
+	if route.Data.Status != "Warning" || !strings.Contains(route.Data.Properties["diagnosis"], "2 running Pod(s)") {
+		t.Fatalf("expected a warning when the Pods are listed without the Service port, got %q: %s", route.Data.Status, route.Data.Properties["diagnosis"])
 	}
 
 	complete := BuildTopology(ingresses, nil, []*corev1.Service{service}, pods, []*discoveryv1.EndpointSlice{apiEndpointSlice("api-1", "api-2")})
