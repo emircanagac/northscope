@@ -18,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 hack/fake-kube-api.py 19090 &
+python3 scripts/fake-kube-api.py 19090 &
 api_pid=$!
 
 cat >"${work_dir}/kubeconfig" <<'EOF'
