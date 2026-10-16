@@ -1,6 +1,7 @@
-# NorthScope
+# <img src="docs/assets/northscope-logo.svg" alt="" width="36" height="36"> NorthScope
 
 [![CI](https://github.com/emircanagac/northscope/actions/workflows/ci.yml/badge.svg)](https://github.com/emircanagac/northscope/actions/workflows/ci.yml)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/northscope)](https://artifacthub.io/packages/helm/northscope/northscope)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Read-only Kubernetes traffic topology debugger. Pick a host and see its configured path from the load balancer and ingress controller through Ingress or Gateway API routes, Services, and endpoints to Pods.
