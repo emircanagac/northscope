@@ -12,7 +12,7 @@ import {
   routeMatchesSearch,
 } from '../src/uiState.ts';
 import {
-  acceptNewerSnapshot,
+  acceptSnapshot,
   type TopologyEdge,
   type TopologyNode,
   type TopologySnapshot,
@@ -188,18 +188,42 @@ test('live snapshot reconciliation preserves measured nodes and unchanged edge r
   assert.deepEqual(updatedNodes[0].position, currentNode.position);
 });
 
-test('topology stream never replaces a newer snapshot with an older version', () => {
-  const snapshot = (version: number): TopologySnapshot => ({
+function streamSnapshot(instance: string, version: number): TopologySnapshot {
+  return {
+    instance,
     version,
     generatedAt: new Date(version * 1000).toISOString(),
     nodes: [],
     edges: [],
-  });
+  };
+}
 
-  const current = snapshot(4);
-  assert.equal(acceptNewerSnapshot(current, snapshot(3)), current);
-  assert.equal(acceptNewerSnapshot(current, snapshot(4)), current);
-  assert.equal(acceptNewerSnapshot(current, snapshot(5)).version, 5);
+test('topology stream never replaces a newer snapshot with an older version from the same instance', () => {
+  const current = streamSnapshot('pod-a', 4);
+
+  assert.equal(acceptSnapshot(current, streamSnapshot('pod-a', 3), false), current);
+  assert.equal(acceptSnapshot(current, streamSnapshot('pod-a', 4), false), current);
+  assert.equal(acceptSnapshot(current, streamSnapshot('pod-a', 5), false).version, 5);
+});
+
+test('topology stream accepts the first snapshot of every connection', () => {
+  const incoming = streamSnapshot('pod-a', 2);
+
+  assert.equal(acceptSnapshot(null, incoming, false), incoming);
+  assert.equal(acceptSnapshot(null, incoming, true), incoming);
+  assert.equal(acceptSnapshot(streamSnapshot('pod-a', 9), incoming, true), incoming);
+});
+
+test('topology stream accepts lower versions from a restarted or different instance', () => {
+  const current = streamSnapshot('pod-a', 42);
+  const restarted = streamSnapshot('pod-b', 1);
+
+  assert.equal(acceptSnapshot(current, restarted, true), restarted);
+  assert.equal(acceptSnapshot(current, restarted, false), restarted);
+
+  const afterSwitch = acceptSnapshot(current, restarted, true);
+  assert.equal(acceptSnapshot(afterSwitch, streamSnapshot('pod-b', 2), false).version, 2);
+  assert.equal(acceptSnapshot(afterSwitch, streamSnapshot('pod-b', 1), false), afterSwitch);
 });
 
 test('stream status says Degraded instead of Live config when watch health reports errors', () => {

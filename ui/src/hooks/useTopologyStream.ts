@@ -53,6 +53,7 @@ export interface ClusterInventory {
 }
 
 export interface TopologySnapshot {
+  instance: string;
   version: number;
   generatedAt: string;
   inventory?: ClusterInventory;
@@ -71,11 +72,19 @@ export interface TopologyStreamState {
   error: string | null;
 }
 
-export function acceptNewerSnapshot(
+// Versions only increase within one backend process. A new connection can
+// reach a restarted process or another replica whose counter starts again at
+// 1, so the first snapshot of a connection and any snapshot from a different
+// instance replace the current one; only the rest must have a newer version.
+export function acceptSnapshot(
   current: TopologySnapshot | null,
   incoming: TopologySnapshot,
+  firstOnConnection: boolean,
 ): TopologySnapshot {
-  if (current && incoming.version <= current.version) {
+  if (!current || firstOnConnection || incoming.instance !== current.instance) {
+    return incoming;
+  }
+  if (incoming.version <= current.version) {
     return current;
   }
   return incoming;
@@ -104,6 +113,7 @@ export function useTopologyStream(endpoint = '/ws'): TopologyStreamState {
     const connect = () => {
       setStatus('connecting');
       socket = new WebSocket(resolveWebSocketURL(endpoint));
+      let firstOnConnection = true;
 
       socket.onopen = () => {
         retryDelayMs = 1000;
@@ -114,7 +124,9 @@ export function useTopologyStream(endpoint = '/ws'): TopologyStreamState {
       socket.onmessage = (event) => {
         try {
           const incoming = JSON.parse(event.data) as TopologySnapshot;
-          setSnapshot((current) => acceptNewerSnapshot(current, incoming));
+          const first = firstOnConnection;
+          firstOnConnection = false;
+          setSnapshot((current) => acceptSnapshot(current, incoming, first));
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Invalid topology payload');
         }

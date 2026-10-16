@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const snapshot = {
+  instance: 'northscope-a',
   version: 1,
   generatedAt: '2026-07-16T12:00:00Z',
   inventory: {
@@ -194,6 +195,21 @@ const f5Snapshot = {
   ],
 };
 
+function snapshotWithPod(instance: string, version: number, podName: string) {
+  const podId = `pod:demo:${podName}`;
+  const isPod = (id: string) => id === 'pod:demo:frontend-6f46558fcf-very-long-pod-name';
+  return {
+    ...snapshot,
+    instance,
+    version,
+    generatedAt: `2026-07-16T12:01:${String(version).padStart(2, '0')}Z`,
+    nodes: snapshot.nodes.map((item) =>
+      isPod(item.id) ? { ...item, id: podId, data: { ...item.data, label: `demo/${podName}`, name: podName } } : item,
+    ),
+    edges: snapshot.edges.map((item) => (isPod(item.target) ? { ...item, target: podId } : item)),
+  };
+}
+
 // installFakeTopologyStream replaces WebSocket with a fake that sends
 // topologySnapshot after connecting, or nothing when it is null.
 async function installFakeTopologyStream(page: Page, topologySnapshot: object | null = snapshot): Promise<void> {
@@ -216,11 +232,12 @@ async function installFakeTopologyStream(page: Page, topologySnapshot: object | 
       constructor() {
         const control = window.__northscopeSocketControl;
         control.instances.push(this);
+        const connectSnapshot = control.connectSnapshot;
         window.setTimeout(() => {
           this.readyState = FakeWebSocket.OPEN;
           this.onopen?.(new Event('open'));
-          if (topologySnapshot) {
-            this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(topologySnapshot) }));
+          if (connectSnapshot) {
+            this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(connectSnapshot) }));
           }
         }, 10);
       }
@@ -245,6 +262,10 @@ async function installFakeTopologyStream(page: Page, topologySnapshot: object | 
 
     window.__northscopeSocketControl = {
       instances: [] as FakeWebSocket[],
+      connectSnapshot: topologySnapshot as unknown,
+      setConnectSnapshot(payload: unknown) {
+        this.connectSnapshot = payload;
+      },
       closeLatest() {
         this.instances.at(-1)?.close();
       },
@@ -260,6 +281,8 @@ declare global {
   interface Window {
     __northscopeSocketControl: {
       instances: Array<{ close(): void }>;
+      connectSnapshot: unknown;
+      setConnectSnapshot(payload: unknown): void;
       closeLatest(): void;
       send(payload: unknown): void;
     };
@@ -406,6 +429,33 @@ test('websocket reconnect restores live topology', async ({ page }) => {
   await expect(page.getByTestId('stream-status')).toHaveText('Reconnecting');
   await expect(page.getByTestId('stream-status')).toHaveText('Live config', { timeout: 3_000 });
   await expect.poll(() => page.evaluate(() => window.__northscopeSocketControl.instances.length)).toBeGreaterThan(1);
+});
+
+test('websocket reconnect to a restarted backend shows its topology despite lower versions', async ({ page }) => {
+  await openSelectedTopology(page);
+  const podCard = (podName: string) => page.getByTestId('topology-node-card').filter({ hasText: podName });
+  const send = (payload: object) => page.evaluate((item) => window.__northscopeSocketControl.send(item), payload);
+
+  await send(snapshotWithPod('northscope-a', 7, 'frontend-6f46558fcf-before-restart'));
+  await expect(podCard('frontend-6f46558fcf-before-restart')).toBeVisible();
+
+  // A restarted process or another replica starts its version counter again at 1.
+  await page.evaluate(
+    (payload) => window.__northscopeSocketControl.setConnectSnapshot(payload),
+    snapshotWithPod('northscope-b', 1, 'frontend-7c9d8f6b5-after-restart'),
+  );
+  await page.evaluate(() => window.__northscopeSocketControl.closeLatest());
+  await expect(page.getByTestId('stream-status')).toHaveText('Reconnecting');
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config', { timeout: 3_000 });
+  await expect(podCard('frontend-7c9d8f6b5-after-restart')).toBeVisible();
+  await expect(podCard('frontend-6f46558fcf-before-restart')).toHaveCount(0);
+
+  await send(snapshotWithPod('northscope-b', 2, 'frontend-7c9d8f6b5-rolled-out'));
+  await expect(podCard('frontend-7c9d8f6b5-rolled-out')).toBeVisible();
+  await send(snapshotWithPod('northscope-b', 1, 'frontend-7c9d8f6b5-stale'));
+  await page.waitForTimeout(250);
+  await expect(podCard('frontend-7c9d8f6b5-rolled-out')).toBeVisible();
+  await expect(podCard('frontend-7c9d8f6b5-stale')).toHaveCount(0);
 });
 
 test('pan and zoom remain stable without viewport reset', async ({ page }) => {

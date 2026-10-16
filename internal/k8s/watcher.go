@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
 	"strings"
@@ -55,6 +56,7 @@ type Watcher struct {
 	cacheSyncReportInterval time.Duration
 
 	mu              sync.RWMutex
+	instance        string
 	version         int64
 	latest          models.TopologySnapshot
 	subscribers     map[chan models.TopologySnapshot]struct{}
@@ -175,6 +177,7 @@ func newWatcherFromClients(
 		podInformer:          factory.Core().V1().Pods(),
 		nodeInformer:         factory.Core().V1().Nodes(),
 		health:               health,
+		instance:             rand.Text(),
 		subscribers:          make(map[chan models.TopologySnapshot]struct{}),
 		rebuildRequests:      make(chan struct{}, 1),
 
@@ -434,6 +437,7 @@ func (w *Watcher) rebuildAndPublishContext(ctx context.Context) {
 		return
 	}
 	w.version++
+	snapshot.Instance = w.instance
 	snapshot.Version = w.version
 	w.latest = snapshot
 	w.snapshotPublishesTotal++

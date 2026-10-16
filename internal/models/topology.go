@@ -72,6 +72,10 @@ type ClusterInventory struct {
 }
 
 type TopologySnapshot struct {
+	// Instance identifies the NorthScope process that published the snapshot.
+	// Version only increases within one instance, so clients must not compare
+	// versions across instances (restarts, rollouts, or other replicas).
+	Instance    string           `json:"instance"`
 	Version     int64            `json:"version"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 	Inventory   ClusterInventory `json:"inventory"`
