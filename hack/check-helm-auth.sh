@@ -136,8 +136,9 @@ expect_contains "${legacy}" '"-auth-dir=/etc/northscope/auth"' "Kubernetes 1.20 
 # Pod annotations and the checksum share one annotations block.
 annotated="${work_dir}/annotated.yaml"
 render "${annotated}" --set podAnnotations.team=platform
-document "${annotated}" Deployment | grep --quiet '^        team: platform$' || fail "podAnnotations are lost when auth adds a checksum"
-document "${annotated}" Deployment | grep --quiet '^        checksum/auth: ' || fail "checksum is lost when podAnnotations are set"
+document "${annotated}" Deployment >"${work_dir}/annotated-deployment.yaml"
+grep --quiet '^        team: platform$' "${work_dir}/annotated-deployment.yaml" || fail "podAnnotations are lost when auth adds a checksum"
+grep --quiet '^        checksum/auth: ' "${work_dir}/annotated-deployment.yaml" || fail "checksum is lost when podAnnotations are set"
 
 # Invalid values fail the render.
 if render "${work_dir}/invalid.yaml" --set auth.cookieSecure=sometimes 2>/dev/null; then
