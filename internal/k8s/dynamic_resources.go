@@ -56,7 +56,6 @@ func preferredOptionalResources(availableGVRs map[schema.GroupVersionResource]st
 	return selected
 }
 
-
 func externalResourceFromUnstructured(obj *unstructured.Unstructured, kind ExternalResourceKind, apiVersion string) (ExternalResource, bool) {
 	resource := ExternalResource{
 		Kind:       kind,
