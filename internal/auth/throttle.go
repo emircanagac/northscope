@@ -11,6 +11,11 @@ const (
 	loginBurst = 5
 	// loginRefill is how long a client waits for each further attempt.
 	loginRefill = 30 * time.Second
+	// proxyLoginBurst and proxyLoginRefill bound all failed sign-ins forwarded
+	// by one trusted proxy, so forged X-Forwarded-For values cannot bypass the
+	// per-client limit, while one client's typos no longer block everyone.
+	proxyLoginBurst  = 50
+	proxyLoginRefill = 2 * time.Second
 	// maxThrottledClients bounds memory; beyond it new clients share one bucket.
 	maxThrottledClients = 10000
 	overflowClientKey   = "*"

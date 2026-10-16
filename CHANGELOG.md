@@ -10,6 +10,7 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 - Routes now warn when running Pods match a Service selector but are missing from its EndpointSlices or Endpoints (for example a named `targetPort` the Pods do not expose), because those Pods receive no traffic.
 - ExternalName Services without ports no longer get a false "no matching port" error.
 - With `watchNamespace` set, Gateway API references to Gateways or Services in other namespaces are reported as outside the watch scope instead of as missing.
+- Sign-in throttling no longer locks every user out behind an ingress controller: clients forwarded by a proxy on a private, shared, or loopback address are identified by the address the proxy appended to `X-Forwarded-For` (or `X-Real-IP`), and a wider per-proxy budget stops forged forwarded addresses from bypassing the limit.
 
 ## 1.0.0 - 2026-10-16
 
