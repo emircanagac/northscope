@@ -7,6 +7,9 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 ## Unreleased
 
 - Linked Ingresses without a resolvable IngressClass to the controller whose Service load balancer address appears in the Ingress status, so controllers that never created an IngressClass (such as Traefik on k3s 1.21) show their LoadBalancer and NodePort entry path instead of a missing-controller warning.
+- Routes now warn when running Pods match a Service selector but are missing from its EndpointSlices or Endpoints (for example a named `targetPort` the Pods do not expose), because those Pods receive no traffic.
+- ExternalName Services without ports no longer get a false "no matching port" error.
+- With `watchNamespace` set, Gateway API references to Gateways or Services in other namespaces are reported as outside the watch scope instead of as missing.
 
 ## 1.0.0 - 2026-10-16
 

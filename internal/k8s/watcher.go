@@ -513,7 +513,8 @@ func (w *Watcher) buildSnapshot(ctx context.Context) (models.TopologySnapshot, e
 	scoped := scopeTrafficInputs(ingresses, services, pods, nodes, externalResources, endpoints, endpointSlices)
 	gatewayClasses, gateways, gatewayRoutes, f5Resources := externalResourceInventory(externalResources)
 
-	snapshot := BuildTopologyWithResourcesAndEndpoints(
+	snapshot := BuildTopologyWithOptions(
+		TopologyOptions{WatchNamespace: w.namespace},
 		ingresses,
 		ingressClasses,
 		scoped.services,

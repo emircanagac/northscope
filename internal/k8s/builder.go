@@ -34,7 +34,29 @@ func BuildTopologyWithResources(
 	return BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, nil, flattenEndpointSlices(endpointSlices))
 }
 
+// TopologyOptions describe how the builder inputs were collected.
+type TopologyOptions struct {
+	// WatchNamespace is set when only one namespace is watched. References to
+	// objects in other namespaces cannot be resolved and are reported as
+	// outside the watch scope instead of missing.
+	WatchNamespace string
+}
+
 func BuildTopologyWithResourcesAndEndpoints(
+	ingresses []*networkingv1.Ingress,
+	ingressClasses []*networkingv1.IngressClass,
+	services []*corev1.Service,
+	pods []*corev1.Pod,
+	nodes []*corev1.Node,
+	externalResources []ExternalResource,
+	endpoints []*corev1.Endpoints,
+	endpointSlices []*discoveryv1.EndpointSlice,
+) models.TopologySnapshot {
+	return BuildTopologyWithOptions(TopologyOptions{}, ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices)
+}
+
+func BuildTopologyWithOptions(
+	options TopologyOptions,
 	ingresses []*networkingv1.Ingress,
 	ingressClasses []*networkingv1.IngressClass,
 	services []*corev1.Service,
@@ -178,6 +200,7 @@ func BuildTopologyWithResourcesAndEndpoints(
 		}
 	}
 
+	endpointPodsByServiceKey := endpointPodsByService(endpointSlices, endpoints, endpointSliceServiceKeys, podsByName, podsByIP)
 	for _, ingress := range ingresses {
 		builder.addIngress(ingress)
 		for _, host := range ingressHosts(ingress) {
@@ -205,7 +228,9 @@ func BuildTopologyWithResourcesAndEndpoints(
 		for _, route := range ingressRoutes(ingress) {
 			svc := servicesByKey[namespacedKey(ingress.Namespace, route.ServiceName)]
 			pods := servicePodsCache[namespacedKey(ingress.Namespace, route.ServiceName)]
-			diagnosis := diagnoseIngressRoute(ingress, route, controllerName, svc, pods, endpointStatsByService[namespacedKey(ingress.Namespace, route.ServiceName)])
+			serviceKey := namespacedKey(ingress.Namespace, route.ServiceName)
+			nonEndpointPods := countNonEndpointPods(pods, endpointPodsByServiceKey[serviceKey])
+			diagnosis := diagnoseIngressRoute(ingress, route, controllerName, svc, pods, endpointStatsByService[serviceKey], nonEndpointPods)
 			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
 			builder.addIngressRoute(ingress, route, diagnosis)
 			builder.addEdge(
@@ -221,7 +246,7 @@ func BuildTopologyWithResourcesAndEndpoints(
 	}
 
 	for _, resource := range externalResources {
-		builder.addExternalResource(resource, servicesByKey, externalResourcesByKey, referenceGrants)
+		builder.addExternalResource(resource, servicesByKey, externalResourcesByKey, referenceGrants, options.WatchNamespace)
 	}
 
 	for _, svc := range services {

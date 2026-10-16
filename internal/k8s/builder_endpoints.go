@@ -206,6 +206,67 @@ func endpointAddressReferencesPod(address corev1.EndpointAddress, namespace stri
 	return ok
 }
 
+// endpointPodsByService maps each Service that has endpoint data to the Pods
+// its EndpointSlices reference, or its legacy Endpoints when it has no
+// EndpointSlices.
+func endpointPodsByService(
+	endpointSlices []*discoveryv1.EndpointSlice,
+	endpoints []*corev1.Endpoints,
+	endpointSliceServiceKeys map[string]struct{},
+	podsByName map[string]*corev1.Pod,
+	podsByIP map[string]*corev1.Pod,
+) map[string]map[string]struct{} {
+	result := map[string]map[string]struct{}{}
+	members := func(serviceKey string) map[string]struct{} {
+		set := result[serviceKey]
+		if set == nil {
+			set = map[string]struct{}{}
+			result[serviceKey] = set
+		}
+		return set
+	}
+	for _, endpointSlice := range endpointSlices {
+		serviceName, ok := endpointSliceServiceName(endpointSlice)
+		if !ok {
+			continue
+		}
+		set := members(namespacedKey(endpointSlice.Namespace, serviceName))
+		for _, pod := range endpointSlicePods(endpointSlice, podsByName, podsByIP) {
+			set[namespacedKey(pod.Namespace, pod.Name)] = struct{}{}
+		}
+	}
+	for _, item := range endpoints {
+		serviceKey := namespacedKey(item.Namespace, item.Name)
+		if _, ok := endpointSliceServiceKeys[serviceKey]; ok {
+			continue
+		}
+		set := members(serviceKey)
+		for _, pod := range endpointPods(item, podsByName, podsByIP) {
+			set[namespacedKey(pod.Namespace, pod.Name)] = struct{}{}
+		}
+	}
+	return result
+}
+
+// countNonEndpointPods counts running Pods with an IP that a Service selects
+// but its endpoint data does not include, for example because the Pod lacks
+// the named targetPort. It returns 0 when the Service has no endpoint data.
+func countNonEndpointPods(selected []*corev1.Pod, endpointPods map[string]struct{}) int {
+	if endpointPods == nil {
+		return 0
+	}
+	count := 0
+	for _, pod := range selected {
+		if pod.Status.PodIP == "" || pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
+			continue
+		}
+		if _, ok := endpointPods[namespacedKey(pod.Namespace, pod.Name)]; !ok {
+			count++
+		}
+	}
+	return count
+}
+
 func endpointSliceServiceName(endpointSlice *discoveryv1.EndpointSlice) (string, bool) {
 	serviceName := endpointSlice.Labels[discoveryv1.LabelServiceName]
 	if serviceName == "" {
