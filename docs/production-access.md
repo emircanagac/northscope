@@ -112,7 +112,7 @@ The chart defaults are a starting point, not a universal production sizing targe
 ## Operational Notes
 
 - Use HTTPS for browser access.
-- Keep `/metrics` behind the same trusted network or scraping boundary as the UI.
+- Keep `/metrics` and `/api/status` behind the same trusted network or scraping boundary as the UI.
 - Keep NorthScope internal unless you have a deliberate public access control layer.
 - Review `SECURITY.md` before enabling access for a production cluster.
 - Prefer version-pinned installs for production change control.

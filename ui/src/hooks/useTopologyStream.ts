@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
+import type { SnapshotHealth } from '../watchHealth';
 
 export type NodeKind =
   | 'F5'
@@ -56,6 +57,7 @@ export interface TopologySnapshot {
   version: number;
   generatedAt: string;
   inventory?: ClusterInventory;
+  health?: SnapshotHealth;
   nodes: TopologyNode[];
   edges: TopologyEdge[];
 }

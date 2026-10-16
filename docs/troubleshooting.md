@@ -23,7 +23,20 @@ NorthScope Kubernetes caches synced
 NorthScope ready: snapshot v1, ... nodes, ... edges
 ```
 
-If `/readyz` returns `503`, the watcher has not generated the first topology snapshot yet. Check RBAC and API connectivity.
+If `/readyz` returns `503`, the watcher has not generated the first topology snapshot yet. NorthScope waits until Ingresses, IngressClasses, Services, Endpoints, EndpointSlices, Pods, and Nodes have each been listed once. While it waits, it logs the resources that are still unsynced every 30 seconds, with their latest error:
+
+```text
+NorthScope still waiting for Kubernetes caches after 30s; unsynced: pods (last error: failed to list *v1.Pod: pods is forbidden: ...)
+```
+
+The same information is available over HTTP:
+
+```bash
+curl http://localhost:18080/readyz?verbose
+curl http://localhost:18080/api/status
+```
+
+Grant the missing read-only permission or restore API server connectivity. NorthScope retries with backoff and does not need a restart.
 
 NorthScope supports Kubernetes 1.20 and newer. It detects the served EndpointSlice API at startup: Kubernetes 1.21+ uses `discovery.k8s.io/v1`, Kubernetes 1.20 uses `discovery.k8s.io/v1beta1`, and clusters that serve neither use legacy Endpoints only. If the API server cannot be reached during this check, NorthScope exits so Kubernetes restarts it instead of watching an API version the cluster may not serve.
 
@@ -45,6 +58,28 @@ kubectl -n northscope create rolebinding northscope-psp --role=northscope-psp --
 ```
 
 On large clusters, raise `resources.limits.memory` (default `256Mi`) or set `watchNamespace` if the Pod is `OOMKilled`. NorthScope caches Pods, Services, Endpoints, and EndpointSlices for the watched scope.
+
+## The UI Shows Degraded Or An Old Snapshot
+
+The header shows when the current snapshot was generated, for example `Snapshot 3m ago`; hover over it for the exact time and snapshot version. NorthScope sends a new snapshot only when topology or watch health changes, so an old snapshot on a healthy instance means nothing changed.
+
+When a list or watch call fails, for example because RBAC was revoked, the ServiceAccount token expired, or the API server is unreachable, NorthScope keeps serving its last cached data and marks the resource as degraded:
+
+- The status pill shows `Degraded` instead of `Live config`.
+- A banner names the degraded resources and their latest error. `(not loaded)` means the resource was never listed, so its objects are missing rather than stale.
+- The log records `NorthScope watch for <resource> degraded` once, and `NorthScope watch for <resource> recovered` when a watch succeeds again.
+
+A resource stays degraded until a watch for it starts or delivers an event again. A successful list alone does not clear it, so a Role that grants `list` but not `watch` stays visible.
+
+After the first snapshot, degraded resources do not fail `/readyz`, and `/healthz` always succeeds while the process runs. Restarting or unrouting NorthScope does not fix RBAC or API server problems; it would only hide the last known topology. Inspect the details instead:
+
+```bash
+curl http://localhost:18080/api/status
+curl http://localhost:18080/readyz?verbose
+kubectl auth can-i watch pods --as=system:serviceaccount:northscope:northscope -A
+```
+
+`/api/status` reports `synced`, `degraded`, `degradedSince`, `lastSuccessAt`, `lastError`, `lastErrorAt`, and `errorCount` for every watched resource. Resources use `kubectl` names such as `pods`, `ingresses.networking.k8s.io`, and `httproutes.gateway.networking.k8s.io`. Optional Gateway API and F5 resources are reported too, but never block startup.
 
 ## No Traffic Routes Are Listed
 
@@ -146,8 +181,15 @@ Useful metrics:
 - `northscope_snapshot_publishes_total`
 - `northscope_snapshot_unchanged_total`
 - `northscope_snapshot_build_duration_seconds`
+- `northscope_snapshot_generated_timestamp_seconds`
 - `northscope_websocket_clients`
+- `northscope_informer_synced{resource}`
+- `northscope_informer_degraded{resource}`
+- `northscope_watch_errors_total{resource}`
+- `northscope_last_watch_success_timestamp_seconds{resource}`
 
 If `northscope_snapshot_build_errors_total` increases, check NorthScope logs for `build topology snapshot failed`.
 
-`northscope_snapshot_unchanged_total` increases when informer resyncs or resource events produce the same traffic-root-scoped topology. Those builds are intentionally not republished to WebSocket clients.
+`northscope_snapshot_unchanged_total` increases when informer resyncs or resource events produce the same traffic-root-scoped topology and watch health. Those builds are intentionally not republished to WebSocket clients.
+
+To catch a stale view, alert when `max(northscope_informer_degraded) > 0` for several minutes. `northscope_watch_errors_total` counts failed list and watch attempts and keeps increasing while client-go retries a degraded resource. `northscope_last_watch_success_timestamp_seconds` advances on every successful list, watch start, and watch event, including bookmarks. A quiet resource can go about 10 minutes without one, so prefer the degraded gauge for alerting.

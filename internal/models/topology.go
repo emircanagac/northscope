@@ -79,6 +79,54 @@ type TopologySnapshot struct {
 	Version     int64            `json:"version"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 	Inventory   ClusterInventory `json:"inventory"`
+	Health      SnapshotHealth   `json:"health"`
 	Nodes       []Node           `json:"nodes"`
 	Edges       []Edge           `json:"edges"`
+}
+
+type HealthStatus string
+
+const (
+	HealthOK       HealthStatus = "ok"
+	HealthDegraded HealthStatus = "degraded"
+	HealthSyncing  HealthStatus = "syncing"
+)
+
+// SnapshotHealth summarizes Kubernetes watch health when a snapshot was
+// published. A degraded resource failed its latest list or watch, so its part
+// of the topology may be stale or missing.
+type SnapshotHealth struct {
+	Status   HealthStatus       `json:"status"`
+	Degraded []DegradedResource `json:"degraded,omitempty"`
+}
+
+type DegradedResource struct {
+	Resource string    `json:"resource"`
+	Synced   bool      `json:"synced"`
+	Since    time.Time `json:"since"`
+	Error    string    `json:"error"`
+}
+
+// ResourceHealth reports list and watch health for one watched resource.
+type ResourceHealth struct {
+	Resource      string     `json:"resource"`
+	Optional      bool       `json:"optional,omitempty"`
+	Synced        bool       `json:"synced"`
+	Degraded      bool       `json:"degraded"`
+	DegradedSince *time.Time `json:"degradedSince,omitempty"`
+	LastSuccessAt *time.Time `json:"lastSuccessAt,omitempty"`
+	LastError     string     `json:"lastError,omitempty"`
+	LastErrorAt   *time.Time `json:"lastErrorAt,omitempty"`
+	ErrorCount    uint64     `json:"errorCount"`
+}
+
+// WatcherStatus is served by /api/status.
+type WatcherStatus struct {
+	Status          HealthStatus     `json:"status"`
+	Ready           bool             `json:"ready"`
+	SnapshotVersion int64            `json:"snapshotVersion"`
+	GeneratedAt     *time.Time       `json:"generatedAt,omitempty"`
+	Degraded        []string         `json:"degraded,omitempty"`
+	Unsynced        []string         `json:"unsynced,omitempty"`
+	Resources       []ResourceHealth `json:"resources"`
 }

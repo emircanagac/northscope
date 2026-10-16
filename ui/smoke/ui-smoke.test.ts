@@ -18,6 +18,13 @@ import {
   type TopologySnapshot,
 } from '../src/hooks/useTopologyStream.ts';
 import { reconcileTopologyEdges, reconcileTopologyNodes } from '../src/flowState.ts';
+import {
+  degradedResources,
+  formatSnapshotAge,
+  healthFromStatus,
+  streamStatusLabel,
+  type WatcherStatus,
+} from '../src/watchHealth.ts';
 
 function route(overrides: Partial<RouteItem>): RouteItem {
   const item = {
@@ -217,4 +224,54 @@ test('topology stream accepts lower versions from a restarted or different insta
   const afterSwitch = acceptSnapshot(current, restarted, true);
   assert.equal(acceptSnapshot(afterSwitch, streamSnapshot('pod-b', 2), false).version, 2);
   assert.equal(acceptSnapshot(afterSwitch, streamSnapshot('pod-b', 1), false), afterSwitch);
+});
+
+test('stream status says Degraded instead of Live config when watch health reports errors', () => {
+  assert.equal(streamStatusLabel('connected', true, false), 'Live config');
+  assert.equal(streamStatusLabel('connected', true, true), 'Degraded');
+  assert.equal(streamStatusLabel('connected', false, true), 'Syncing');
+  assert.equal(streamStatusLabel('connecting', true, true), 'Connecting');
+  assert.equal(streamStatusLabel('disconnected', true, true), 'Reconnecting');
+});
+
+test('degraded resources come from snapshot health or the startup status endpoint', () => {
+  const since = '2026-10-16T12:00:00Z';
+  assert.deepEqual(degradedResources(undefined), []);
+  assert.deepEqual(degradedResources({ status: 'ok' }), []);
+  assert.deepEqual(
+    degradedResources({ status: 'degraded', degraded: [{ resource: 'pods', synced: true, since, error: 'forbidden' }] }).map(
+      (item) => item.resource,
+    ),
+    ['pods'],
+  );
+
+  const status: WatcherStatus = {
+    status: 'degraded',
+    ready: false,
+    snapshotVersion: 0,
+    unsynced: ['pods'],
+    resources: [
+      { resource: 'pods', synced: false, degraded: true, degradedSince: since, lastError: 'pods is forbidden', errorCount: 3 },
+      { resource: 'services', synced: true, degraded: false, errorCount: 0 },
+    ],
+  };
+  assert.deepEqual(degradedResources(healthFromStatus(status)), [
+    { resource: 'pods', synced: false, since, error: 'pods is forbidden' },
+  ]);
+  assert.equal(healthFromStatus(null), null);
+  assert.equal(healthFromStatus({ ...status, resources: undefined } as unknown as WatcherStatus), null);
+});
+
+test('snapshot age is relative to generatedAt and tolerates clock skew', () => {
+  const generatedAt = '2026-10-16T12:00:00Z';
+  const at = (seconds: number) => Date.parse(generatedAt) + seconds * 1000;
+
+  assert.equal(formatSnapshotAge(generatedAt, at(-30)), 'just now');
+  assert.equal(formatSnapshotAge(generatedAt, at(5)), 'just now');
+  assert.equal(formatSnapshotAge(generatedAt, at(42)), '42s ago');
+  assert.equal(formatSnapshotAge(generatedAt, at(5 * 60 + 59)), '5m ago');
+  assert.equal(formatSnapshotAge(generatedAt, at(3 * 3600)), '3h ago');
+  assert.equal(formatSnapshotAge(generatedAt, at(2 * 86400)), '2d ago');
+  assert.equal(formatSnapshotAge('0001-01-01T00:00:00Z', at(0)), '');
+  assert.equal(formatSnapshotAge('not a date', at(0)), '');
 });

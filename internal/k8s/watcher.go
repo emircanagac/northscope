@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	networkinginformers "k8s.io/client-go/informers/networking/v1"
@@ -31,6 +31,8 @@ const defaultResyncPeriod = 10 * time.Minute
 const defaultRebuildDebounce = 250 * time.Millisecond
 const optionalResourceRefreshInterval = 2 * time.Minute
 const optionalResourceRequestTimeout = 15 * time.Second
+const cacheSyncPollInterval = 100 * time.Millisecond
+const defaultCacheSyncReportInterval = 30 * time.Second
 
 type Watcher struct {
 	discovery       discovery.DiscoveryInterface
@@ -49,6 +51,9 @@ type Watcher struct {
 	endpointSlices       *endpointSliceSource
 	podInformer          coreinformers.PodInformer
 	nodeInformer         coreinformers.NodeInformer
+
+	health                  *informerHealth
+	cacheSyncReportInterval time.Duration
 
 	mu              sync.RWMutex
 	instance        string
@@ -94,7 +99,9 @@ type WatcherMetrics struct {
 	SnapshotPublishesTotal           uint64
 	SnapshotUnchangedTotal           uint64
 	LastSnapshotBuildDurationSeconds float64
+	SnapshotGeneratedAt              time.Time
 	WebsocketSubscribers             int
+	Resources                        []models.ResourceHealth
 }
 
 func NewWatcher(config *rest.Config) (*Watcher, error) {
@@ -147,6 +154,12 @@ func newWatcherFromClients(
 	}
 
 	factory := informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod, factoryOptions...)
+	health := newInformerHealth()
+	for _, item := range topologyInformers(options.Namespace, endpointSliceAPI) {
+		if err := registerTypedInformer(factory, health, item); err != nil {
+			return nil, err
+		}
+	}
 	w := &Watcher{
 		discovery:            client.Discovery(),
 		dynamicClient:        dynamicClient,
@@ -163,10 +176,14 @@ func newWatcherFromClients(
 		endpointSlices:       newEndpointSliceSource(factory, endpointSliceAPI),
 		podInformer:          factory.Core().V1().Pods(),
 		nodeInformer:         factory.Core().V1().Nodes(),
+		health:               health,
 		instance:             rand.Text(),
 		subscribers:          make(map[chan models.TopologySnapshot]struct{}),
 		rebuildRequests:      make(chan struct{}, 1),
+
+		cacheSyncReportInterval: defaultCacheSyncReportInterval,
 	}
+	health.onChange = w.rebuildAndPublishWhenReady
 
 	if err := w.registerHandlers(); err != nil {
 		return nil, err
@@ -178,19 +195,8 @@ func newWatcherFromClients(
 func (w *Watcher) Run(ctx context.Context) error {
 	w.factory.Start(ctx.Done())
 
-	synced := []cache.InformerSynced{
-		w.ingressInformer.Informer().HasSynced,
-		w.ingressClassInformer.Informer().HasSynced,
-		w.serviceInformer.Informer().HasSynced,
-		w.endpointInformer.Informer().HasSynced,
-		w.podInformer.Informer().HasSynced,
-		w.nodeInformer.Informer().HasSynced,
-	}
-	if w.endpointSlices != nil {
-		synced = append(synced, w.endpointSlices.informer.HasSynced)
-	}
-	if ok := cache.WaitForCacheSync(ctx.Done(), synced...); !ok {
-		return fmt.Errorf("kubernetes informer cache sync failed")
+	if err := w.waitForCacheSync(ctx); err != nil {
+		return err
 	}
 
 	log.Printf("NorthScope Kubernetes caches synced")
@@ -199,6 +205,36 @@ func (w *Watcher) Run(ctx context.Context) error {
 	w.rebuildAndPublishContext(ctx)
 
 	return w.runRebuildLoop(ctx)
+}
+
+// waitForCacheSync blocks until every typed informer has listed its resource
+// once. A missing RBAC rule or an unreachable API server would otherwise block
+// startup silently, so it periodically logs the informers that are still
+// unsynced together with their latest list or watch error.
+func (w *Watcher) waitForCacheSync(ctx context.Context) error {
+	started := time.Now()
+	poll := time.NewTicker(cacheSyncPollInterval)
+	defer poll.Stop()
+	report := time.NewTicker(w.cacheSyncReportInterval)
+	defer report.Stop()
+
+	for {
+		unsynced := w.health.unsynced()
+		if len(unsynced) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-poll.C:
+		case <-report.C:
+			log.Printf(
+				"NorthScope still waiting for Kubernetes caches after %s; unsynced: %s",
+				time.Since(started).Round(time.Second),
+				describeUnsynced(unsynced),
+			)
+		}
+	}
 }
 
 func (w *Watcher) runRebuildLoop(ctx context.Context) error {
@@ -260,6 +296,7 @@ func (w *Watcher) Ready() bool {
 }
 
 func (w *Watcher) Metrics() WatcherMetrics {
+	resources := w.health.resourceHealth()
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return WatcherMetrics{
@@ -272,8 +309,44 @@ func (w *Watcher) Metrics() WatcherMetrics {
 		SnapshotPublishesTotal:           w.snapshotPublishesTotal,
 		SnapshotUnchangedTotal:           w.snapshotUnchangedTotal,
 		LastSnapshotBuildDurationSeconds: w.lastSnapshotBuildDuration.Seconds(),
+		SnapshotGeneratedAt:              w.latest.GeneratedAt,
 		WebsocketSubscribers:             len(w.subscribers),
+		Resources:                        resources,
 	}
+}
+
+// Status reports readiness and per-resource watch health. Degraded resources
+// do not affect readiness: once the first snapshot exists NorthScope keeps
+// serving its cache and reports which parts may be stale.
+func (w *Watcher) Status() models.WatcherStatus {
+	resources := w.health.resourceHealth()
+	w.mu.RLock()
+	ready := atomic.LoadUint32(&w.ready) == 1 && !w.latest.GeneratedAt.IsZero()
+	status := models.WatcherStatus{
+		Ready:           ready,
+		SnapshotVersion: w.latest.Version,
+		GeneratedAt:     optionalTime(w.latest.GeneratedAt),
+		Resources:       resources,
+	}
+	w.mu.RUnlock()
+
+	for _, resource := range resources {
+		if resource.Degraded {
+			status.Degraded = append(status.Degraded, resource.Resource)
+		}
+		if !resource.Synced {
+			status.Unsynced = append(status.Unsynced, resource.Resource)
+		}
+	}
+	switch {
+	case len(status.Degraded) > 0:
+		status.Status = models.HealthDegraded
+	case !ready:
+		status.Status = models.HealthSyncing
+	default:
+		status.Status = models.HealthOK
+	}
+	return status
 }
 
 func (w *Watcher) Subscribe(buffer int) (<-chan models.TopologySnapshot, func()) {
@@ -352,12 +425,13 @@ func (w *Watcher) rebuildAndPublishContext(ctx context.Context) {
 		log.Printf("build topology snapshot failed: %v", err)
 		return
 	}
+	snapshot.Health = w.health.snapshotHealth()
 
 	w.mu.Lock()
 	firstSnapshot := w.latest.GeneratedAt.IsZero()
 	w.snapshotBuildsTotal++
 	w.lastSnapshotBuildDuration = time.Since(started)
-	if !firstSnapshot && sameTopology(w.latest, snapshot) {
+	if !firstSnapshot && sameTopology(w.latest, snapshot) && sameHealth(w.latest.Health, snapshot.Health) {
 		w.snapshotUnchangedTotal++
 		w.mu.Unlock()
 		return
@@ -382,11 +456,16 @@ func (w *Watcher) rebuildAndPublishContext(ctx context.Context) {
 	w.mu.Unlock()
 
 	if firstSnapshot {
+		degraded := ""
+		if snapshot.Health.Status == models.HealthDegraded {
+			degraded = fmt.Sprintf(" (degraded: %s)", strings.Join(degradedResourceNames(snapshot.Health), ", "))
+		}
 		log.Printf(
-			"NorthScope ready: snapshot v%d, %d nodes, %d edges",
+			"NorthScope ready: snapshot v%d, %d nodes, %d edges%s",
 			snapshot.Version,
 			len(snapshot.Nodes),
 			len(snapshot.Edges),
+			degraded,
 		)
 	}
 }
@@ -570,20 +649,17 @@ func (w *Watcher) startOptionalInformers(ctx context.Context) {
 		if item.scope == "cluster" {
 			namespace = metav1.NamespaceAll
 		}
-		informer := dynamicinformer.NewFilteredDynamicInformer(
-			w.dynamicClient,
-			item.gvr,
-			namespace,
-			w.resyncPeriod,
-			cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
-			nil,
-		).Informer()
+		informer := w.newOptionalInformer(item, namespace)
 		if err := informer.SetTransform(stripManagedFields); err != nil {
 			log.Printf("register optional topology watch %s transform failed: %v", item.gvr.String(), err)
 			continue
 		}
 		if _, err := informer.AddEventHandler(handler); err != nil {
 			log.Printf("register optional topology watch %s failed: %v", item.gvr.String(), err)
+			continue
+		}
+		if err := w.health.track(item.gvr.GroupResource().String(), informer, true); err != nil {
+			log.Printf("register optional topology watch %s health failed: %v", item.gvr.String(), err)
 			continue
 		}
 		w.optionalInformers = append(w.optionalInformers, informer)
