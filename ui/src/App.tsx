@@ -22,6 +22,8 @@ import {
 } from './hooks/useTopologyStream';
 import { useAppVersion } from './hooks/useAppVersion';
 import { useWatcherStatus } from './hooks/useWatcherStatus';
+import { useSession } from './hooks/useSession';
+import { LOGOUT_PATH } from './auth';
 import { summarizeKinds } from './topologyView';
 import {
   filterEdgesForNodes,
@@ -76,6 +78,7 @@ function initialThemeMode(): ThemeMode {
 export default function App() {
   const { nodes, edges, snapshot, status, error } = useTopologyStream();
   const appVersion = useAppVersion();
+  const session = useSession();
   const [namespace, setNamespace] = useState('');
   const [namespaceQuery, setNamespaceQuery] = useState('');
   const [namespacePickerOpen, setNamespacePickerOpen] = useState(false);
@@ -369,6 +372,17 @@ export default function App() {
           >
             {streamStatusLabel(status, hasSnapshot, isDegraded)}
           </div>
+          {session?.authEnabled ? (
+            <form method="post" action={LOGOUT_PATH}>
+              <button
+                type="submit"
+                title={session.username ? `Signed in as ${session.username}` : undefined}
+                className="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-black text-slate-600 shadow-sm transition hover:border-slate-400 hover:text-slate-950 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+              >
+                Sign out
+              </button>
+            </form>
+          ) : null}
         </div>
       </header>
 

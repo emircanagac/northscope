@@ -17,5 +17,19 @@ Open:
   http://localhost:18080
 {{ end }}
 
+{{ if .Values.auth.enabled -}}
+Sign in:
+{{- if .Values.auth.existingSecret }}
+  Username: kubectl -n {{ .Release.Namespace }} get secret {{ include "northscope.authSecretName" . }} -o jsonpath='{.data.username}' | base64 -d; echo
+{{- else }}
+  Username: {{ .Values.auth.username }}
+{{- end }}
+  Password: kubectl -n {{ .Release.Namespace }} get secret {{ include "northscope.authSecretName" . }} -o jsonpath='{.data.password}' | base64 -d; echo
+
+{{ else -}}
+WARNING: Authentication is disabled (auth.enabled=false). Anyone who can reach
+the Service can view cluster topology, including internal hostnames and Pod IPs.
+
+{{ end -}}
 Uninstall:
   helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}

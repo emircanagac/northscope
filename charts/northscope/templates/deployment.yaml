@@ -13,9 +13,18 @@ spec:
     metadata:
       labels:
         {{- include "northscope.selectorLabels" . | nindent 8 }}
-      {{- with .Values.podAnnotations }}
+      {{- $authChecksum := "" }}
+      {{- if and .Values.auth.enabled (not .Values.auth.existingSecret) }}
+      {{- $authChecksum = include "northscope.authSecretData" . | sha256sum }}
+      {{- end }}
+      {{- if or .Values.podAnnotations $authChecksum }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $authChecksum }}
+        checksum/auth: {{ $authChecksum }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "northscope.serviceAccountName" . }}
@@ -36,6 +45,11 @@ spec:
             - "-f5={{ .Values.discovery.f5.enabled }}"
             {{- if .Values.watchNamespace }}
             - "-namespace={{ .Values.watchNamespace }}"
+            {{- end }}
+            {{- if .Values.auth.enabled }}
+            - "-auth-dir=/etc/northscope/auth"
+            - "-auth-cookie-secure={{ .Values.auth.cookieSecure }}"
+            - "-auth-protect-metrics={{ .Values.auth.protectMetrics }}"
             {{- end }}
 {{ range .Values.extraArgs }}
             - {{ . | quote }}
@@ -60,6 +74,25 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.auth.enabled }}
+          volumeMounts:
+            - name: auth
+              mountPath: /etc/northscope/auth
+              readOnly: true
+          {{- end }}
+      {{- if .Values.auth.enabled }}
+      volumes:
+        - name: auth
+          secret:
+            secretName: {{ include "northscope.authSecretName" . }}
+            items:
+              - key: username
+                path: username
+              - key: password
+                path: password
+              - key: session-key
+                path: session-key
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

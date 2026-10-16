@@ -28,6 +28,28 @@ discovery:
   f5:
     enabled: true
 
+# Built-in username/password sign-in for the UI, API, and WebSocket.
+auth:
+  enabled: true
+  username: admin
+  # Empty generates a random 24-character password on install. Read it with
+  # the command printed in the release notes. Set it to choose your own.
+  password: ""
+  # Name of an existing Secret with the keys username, password, and
+  # session-key (at least 32 characters). When set, the chart does not create
+  # a Secret and ignores username and password above. Use this with
+  # `helm template`, Argo CD, Flux, and other GitOps tools: the chart reuses a
+  # generated password and session key across upgrades through Helm `lookup`,
+  # which returns nothing when there is no cluster to query, so every render
+  # there would generate new credentials.
+  existingSecret: ""
+  # Session cookie Secure attribute: auto sets it when the request arrived
+  # over HTTPS or with X-Forwarded-Proto: https; true always; false never.
+  cookieSecure: auto
+  # Require a session for /metrics. Prometheus cannot sign in, so leave this
+  # off unless /metrics is scraped some other way.
+  protectMetrics: false
+
 podAnnotations: {}
 
 # The image already runs as the numeric non-root user 65532:65532. No fixed

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import type { SnapshotHealth } from '../watchHealth';
+import { checkSession, redirectToLogin } from '../auth.ts';
 
 export type NodeKind =
   | 'F5'
@@ -142,8 +143,19 @@ export function useTopologyStream(endpoint = '/ws'): TopologyStreamState {
         }
 
         setStatus('disconnected');
-        reconnectTimer.current = window.setTimeout(connect, retryDelayMs);
-        retryDelayMs = Math.min(retryDelayMs * 2, 10000);
+        // A browser cannot read the status of a rejected WebSocket handshake,
+        // so ask the API whether the session is gone before reconnecting.
+        void checkSession().then((session) => {
+          if (closedByReact) {
+            return;
+          }
+          if (session === 'unauthenticated') {
+            redirectToLogin();
+            return;
+          }
+          reconnectTimer.current = window.setTimeout(connect, retryDelayMs);
+          retryDelayMs = Math.min(retryDelayMs * 2, 10000);
+        });
       };
     };
 

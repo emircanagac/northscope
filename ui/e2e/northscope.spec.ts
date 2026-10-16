@@ -307,10 +307,75 @@ async function openSelectedTopology(
       body: JSON.stringify({ version: 'v9.8.7' }),
     });
   });
+  await mockSession(page, { authEnabled: false });
   await page.goto('/');
   await expect(page.getByTestId('stream-status')).toHaveText('Live config');
   await page.getByTestId('host-route').filter({ hasText: host }).click();
   await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
+}
+
+const unauthorized = {
+  status: 401,
+  contentType: 'application/json',
+  body: JSON.stringify({ error: 'authentication required' }),
+};
+
+async function mockSession(page: Page, ...responses: Array<object | null>): Promise<void> {
+  // Each response is used once and the last one repeats; null answers 401.
+  let calls = 0;
+  await page.route('**/api/session', async (route) => {
+    const response = responses[Math.min(calls, responses.length - 1)];
+    calls += 1;
+    await route.fulfill(
+      response === null
+        ? unauthorized
+        : { status: 200, contentType: 'application/json', body: JSON.stringify(response) },
+    );
+  });
+}
+
+async function mockLoginPage(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/login',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><title>Sign in · NorthScope</title><h1>Sign in</h1>',
+      });
+    },
+  );
+}
+
+async function installRejectedTopologyStream(page: Page): Promise<void> {
+  // Browsers only report a rejected handshake as a close without an open.
+  await page.addInitScript(() => {
+    class RejectedWebSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+
+      readyState = RejectedWebSocket.CONNECTING;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onclose: ((event: Event) => void) | null = null;
+
+      constructor() {
+        window.setTimeout(() => {
+          this.readyState = RejectedWebSocket.CLOSED;
+          this.onerror?.(new Event('error'));
+          this.onclose?.(new Event('close'));
+        }, 10);
+      }
+
+      close() {}
+
+      send() {}
+    }
+    Object.assign(window, { WebSocket: RejectedWebSocket });
+  });
 }
 
 test('header displays the runtime application version', async ({ page }) => {
@@ -608,4 +673,57 @@ test('simple and expanded cards share dimensions and contain their content', asy
     }).length,
   );
   expect(overflowCount).toBe(0);
+});
+
+test('unauthenticated API response redirects to the login page', async ({ page }) => {
+  await installFakeTopologyStream(page);
+  await page.route('**/api/version', (route) => route.fulfill(unauthorized));
+  await mockSession(page, null);
+  await mockLoginPage(page);
+
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+});
+
+test('rejected websocket handshake redirects to the login page instead of reconnecting', async ({ page }) => {
+  await installRejectedTopologyStream(page);
+  await page.route('**/api/version', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: 'v9.8.7' }) }),
+  );
+  // The page loads with a session that has expired by the time the socket connects.
+  await mockSession(page, { authEnabled: true, username: 'admin' }, null);
+  await mockLoginPage(page);
+
+  await page.goto('/?namespace=demo');
+  await expect(page).toHaveURL(/\/login\?next=%2F%3Fnamespace%3Ddemo$/);
+});
+
+test('sign out posts to the backend and returns to the login page', async ({ page }) => {
+  await installFakeTopologyStream(page);
+  await page.route('**/api/version', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: 'v9.8.7' }) }),
+  );
+  await mockSession(page, { authEnabled: true, username: 'admin' });
+  await mockLoginPage(page);
+  let logoutMethod = '';
+  await page.route('**/logout', async (route) => {
+    logoutMethod = route.request().method();
+    await route.fulfill({ status: 303, headers: { Location: '/login' } });
+  });
+
+  await page.goto('/');
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config');
+  const signOut = page.getByRole('button', { name: 'Sign out' });
+  await expect(signOut).toHaveAttribute('title', 'Signed in as admin');
+  await signOut.click();
+
+  await expect(page).toHaveURL(/\/login$/);
+  expect(logoutMethod).toBe('POST');
+});
+
+test('sign out is hidden when authentication is disabled', async ({ page }) => {
+  await openSelectedTopology(page);
+  await expect(page.getByTestId('app-version')).toHaveText('v9.8.7');
+  await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
 });

@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/emircanagac/northscope/internal/auth"
 	"github.com/emircanagac/northscope/internal/k8s"
 )
 
@@ -24,6 +25,17 @@ type Server struct {
 	staticFS   fs.FS
 	version    string
 	upgrader   websocket.Upgrader
+	auth       *auth.Authenticator
+}
+
+// Option configures optional Server behavior.
+type Option func(*Server)
+
+// WithAuth requires a NorthScope sign-in for the UI, API, and WebSocket.
+func WithAuth(authenticator *auth.Authenticator) Option {
+	return func(s *Server) {
+		s.auth = authenticator
+	}
 }
 
 const (
@@ -32,7 +44,7 @@ const (
 	websocketPingPeriod = websocketPongWait * 9 / 10
 )
 
-func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string) *Server {
+func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string, opts ...Option) *Server {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		version = "dev"
@@ -46,6 +58,9 @@ func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string) *Ser
 			CheckOrigin: sameOrigin,
 		},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
@@ -53,14 +68,22 @@ func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string) *Ser
 	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/session", s.handleSession)
 	mux.HandleFunc("/api/topology", s.handleTopology)
 	mux.HandleFunc("/ws", s.handleTopologyStream)
 	mux.HandleFunc("/ws/topology", s.handleTopologyStream)
 	mux.Handle("/", s.staticHandler())
 
+	var handler http.Handler = mux
+	if s.auth != nil {
+		mux.Handle(auth.LoginPath, s.auth.LoginHandler())
+		mux.Handle(auth.LogoutPath, s.auth.LogoutHandler())
+		handler = s.auth.Middleware(mux)
+	}
+
 	s.httpServer = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           securityHeaders(handler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -163,6 +186,28 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(struct {
 		Version string `json:"version"`
 	}{Version: s.version})
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	response := struct {
+		AuthEnabled bool       `json:"authEnabled"`
+		Username    string     `json:"username,omitempty"`
+		ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+	}{}
+	if s.auth != nil {
+		session, ok := auth.SessionFromContext(r.Context())
+		if !ok {
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		response.AuthEnabled = true
+		response.Username = session.Username
+		response.ExpiresAt = &session.ExpiresAt
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -282,11 +327,23 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 	pingTicker := time.NewTicker(websocketPingPeriod)
 	defer pingTicker.Stop()
 
+	// An open stream must not outlive the session that authorized it.
+	var sessionExpired <-chan time.Time
+	if session, ok := auth.SessionFromContext(r.Context()); ok {
+		expiryTimer := time.NewTimer(time.Until(session.ExpiresAt))
+		defer expiryTimer.Stop()
+		sessionExpired = expiryTimer.C
+	}
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-readDone:
+			return
+		case <-sessionExpired:
+			closeMessage := websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session expired")
+			_ = conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(websocketWriteWait))
 			return
 		case <-pingTicker.C:
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(websocketWriteWait)); err != nil {
