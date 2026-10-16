@@ -1,14 +1,17 @@
 apiVersion: v2
 name: northscope
-description: Read-only Kubernetes north-south traffic topology debugger
+description: Read-only Kubernetes traffic map that shows how every host enters your cluster, from load balancer and ingress controller to Pods.
 type: application
 kubeVersion: ">=1.20.0-0"
-version: 1.1.0
-appVersion: "1.1.0"
+version: 1.1.1
+appVersion: "1.1.1"
+icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
 keywords:
   - kubernetes
   - ingress
+  - gateway-api
   - topology
+  - traffic
   - debugging
   - observability
 home: https://github.com/emircanagac/northscope
@@ -16,3 +19,30 @@ sources:
   - https://github.com/emircanagac/northscope
 maintainers:
   - name: Emircan Agac
+    url: https://github.com/emircanagac
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: networking
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/images: |
+    - name: northscope
+      image: ghcr.io/emircanagac/northscope:1.1.1
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/emircanagac/northscope#readme
+    - name: Production access
+      url: https://github.com/emircanagac/northscope/blob/main/docs/production-access.md
+    - name: Troubleshooting
+      url: https://github.com/emircanagac/northscope/blob/main/docs/troubleshooting.md
+    - name: Security policy
+      url: https://github.com/emircanagac/northscope/blob/main/SECURITY.md
+  artifacthub.io/screenshots: |
+    - title: Traffic path for a host, light theme
+      url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-light.png
+    - title: Traffic path for a host, dark theme
+      url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
+  artifacthub.io/changes: |
+    - kind: added
+      description: Chart README, logo, and Artifact Hub metadata
+    - kind: added
+      description: values.schema.json validates chart values and documents them in Artifact Hub

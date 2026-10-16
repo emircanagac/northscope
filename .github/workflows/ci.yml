@@ -84,6 +84,31 @@ jobs:
             --set podDisruptionBudget.enabled=true \
             | grep --quiet '^apiVersion: policy/v1beta1$'
 
+      - name: Check chart version alignment
+        run: |
+          chart=charts/northscope/Chart.yaml
+          app_version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" | tr -d '"')"
+          image_tag="$(awk '/^image:/ {in_image=1; next} in_image && /^  tag:/ {print $2; exit}' charts/northscope/values.yaml | tr -d '"')"
+          if [ "$image_tag" != "$app_version" ]; then
+            echo "::error::values.yaml image tag $image_tag does not match appVersion $app_version"
+            exit 1
+          fi
+          if ! grep --quiet "image: ghcr.io/emircanagac/northscope:${app_version}$" "$chart"; then
+            echo "::error::Artifact Hub images annotation does not reference appVersion $app_version"
+            exit 1
+          fi
+
+      - name: Reject invalid values
+        run: |
+          if helm template northscope charts/northscope --set ingres.enabled=true >/dev/null 2>&1; then
+            echo "::error::values.schema.json accepted an unknown top-level key"
+            exit 1
+          fi
+          if helm template northscope charts/northscope --set service.type=Bogus >/dev/null 2>&1; then
+            echo "::error::values.schema.json accepted an invalid service.type"
+            exit 1
+          fi
+
       - name: Check sign-in rendering
         run: |
           fail() { echo "::error::$1"; exit 1; }
@@ -355,6 +380,11 @@ jobs:
 
           if [ "$image_tag" != "$release_version" ]; then
             echo "Default image tag $image_tag does not match tag $release_version"
+            exit 1
+          fi
+
+          if ! grep --quiet "image: ghcr.io/emircanagac/northscope:${release_version}$" charts/northscope/Chart.yaml; then
+            echo "Artifact Hub images annotation does not reference ${release_version}"
             exit 1
           fi
 

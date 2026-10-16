@@ -8,6 +8,12 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 No unreleased changes.
 
+## 1.1.1 - 2026-10-17
+
+- Added a chart README, a logo, and Artifact Hub metadata (license, category, links, screenshots, container image, and release changes) so the chart page on Artifact Hub is complete.
+- Added `values.schema.json`, which rejects unknown keys and invalid values such as an unsupported `service.type` and documents the chart values on Artifact Hub.
+- CI now checks that the default image tag and the Artifact Hub image annotation match the chart `appVersion`.
+
 ## 1.1.0 - 2026-10-16
 
 - Linked Ingresses without a resolvable IngressClass to the controller whose Service load balancer address appears in the Ingress status, so controllers that never created an IngressClass (such as Traefik on k3s 1.21) show their LoadBalancer and NodePort entry path instead of a missing-controller warning.

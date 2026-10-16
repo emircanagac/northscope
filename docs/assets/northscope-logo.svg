@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="NorthScope">
+  <rect width="256" height="256" rx="56" fill="#0f172a"/>
+  <path d="M128 136 L68 196 M128 136 L128 204 M128 136 L188 196" stroke="#38bdf8" stroke-width="14" fill="none" stroke-linecap="round"/>
+  <circle cx="68" cy="196" r="16" fill="#38bdf8"/>
+  <circle cx="128" cy="204" r="16" fill="#38bdf8"/>
+  <circle cx="188" cy="196" r="16" fill="#38bdf8"/>
+  <path d="M128 36 L154 124 L128 110 L102 124 Z" fill="#f8fafc"/>
+  <circle cx="128" cy="132" r="15" fill="#f8fafc"/>
+</svg>
