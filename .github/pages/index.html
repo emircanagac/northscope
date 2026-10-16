@@ -3,13 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>NorthScope Helm Chart Repository</title>
   <meta name="description" content="Helm chart repository for NorthScope, a read-only Kubernetes traffic topology debugger for Ingress, Gateway API, Services, and Pods.">
   <style>
+    :root {
+      color-scheme: dark;
+    }
     body {
       margin: 0;
-      background: #fff;
-      color: #222;
+      background: #161819;
+      color: #d8d8d8;
       font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     }
     .page {
@@ -18,8 +22,12 @@
       padding: 0 1em 2em;
     }
     header {
-      border-bottom: 1px solid #ccc;
+      border-bottom: 1px solid #3d4144;
       padding: 1.5em 0 0.75em;
+    }
+    h1,
+    h2 {
+      color: #f2f2f2;
     }
     header h1 {
       margin: 0;
@@ -28,7 +36,7 @@
     }
     .tagline {
       margin: 0.2em 0 0.8em;
-      color: #555;
+      color: #a8adb0;
       font-size: 1.1em;
     }
     nav a {
@@ -36,19 +44,19 @@
     }
     nav span {
       margin-right: 0.35em;
-      color: #999;
+      color: #6f7477;
     }
     h2 {
       margin: 1.8em 0 0.6em;
       padding-bottom: 0.2em;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid #33373a;
       font-size: 1.35em;
     }
     a {
-      color: #0645ad;
+      color: #7fb2f0;
     }
     a:visited {
-      color: #0b0080;
+      color: #b39ddb;
     }
     code,
     pre {
@@ -56,15 +64,15 @@
     }
     code {
       padding: 0.1em 0.3em;
-      border: 1px solid #e3e3e3;
-      background: #f6f6f6;
+      border: 1px solid #3a3e41;
+      background: #202325;
       font-size: 0.9em;
     }
     pre {
       overflow-x: auto;
       padding: 0.75em 1em;
-      border: 1px solid #ddd;
-      background: #f6f6f6;
+      border: 1px solid #3a3e41;
+      background: #202325;
       font-size: 14px;
       line-height: 1.45;
     }
@@ -84,23 +92,24 @@
     th,
     td {
       padding: 0.35em 0.75em;
-      border: 1px solid #ccc;
+      border: 1px solid #3d4144;
       text-align: left;
       white-space: nowrap;
     }
     th {
-      background: #f0f0f0;
+      background: #24272a;
     }
     .notice {
       padding: 0.6em 0.9em;
-      border: 1px solid #e6d97a;
-      background: #fffbe6;
+      border: 1px solid #6b5d20;
+      background: #2a2512;
+      color: #eee3b8;
     }
     footer {
       margin-top: 2.5em;
       padding-top: 0.75em;
-      border-top: 1px solid #ccc;
-      color: #666;
+      border-top: 1px solid #3d4144;
+      color: #8f9497;
       font-size: 0.875em;
     }
   </style>
@@ -177,7 +186,7 @@ helm upgrade --install northscope northscope/northscope \
       </table>
     </div>
     <p>
-      Older chart versions are listed in <a href="index.yaml">index.yaml</a>. Release notes are in the
+      All chart versions are listed in <a href="index.yaml">index.yaml</a>. Release notes are in the
       <a href="https://github.com/emircanagac/northscope/blob/main/CHANGELOG.md">changelog</a>.
       To verify a downloaded package:
     </p>
