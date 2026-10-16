@@ -21,27 +21,36 @@ NorthScope reads Kubernetes configuration only. It does not capture traffic or p
 
 ## Install
 
-Requirements: Kubernetes 1.20+, Helm 3, and an ingress controller. The TLS Secret can come from cert-manager or your own certificate.
+Requirements: Kubernetes 1.20+, Helm 3, and an ingress controller.
+
+The chart exposes NorthScope through an Ingress by default. Set the host in a values file:
+
+```yaml
+# values.yaml
+ingress:
+  hosts:
+    - host: northscope.your-domain.com
+  # Recommended: a TLS Secret from cert-manager or your own certificate.
+  tls:
+    - secretName: northscope-tls
+      hosts:
+        - northscope.your-domain.com
+```
 
 ```bash
 helm repo add northscope https://emircanagac.github.io/northscope
 helm repo update
 helm upgrade --install northscope northscope/northscope \
-  --namespace northscope --create-namespace \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set 'ingress.hosts[0].host=northscope.example.com' \
-  --set 'ingress.tls[0].secretName=northscope-tls' \
-  --set 'ingress.tls[0].hosts[0]=northscope.example.com'
+  --namespace northscope --create-namespace -f values.yaml
 ```
 
-Open `https://northscope.example.com` and sign in as `admin` with the generated password:
+Open the host in a browser and sign in as `admin` with the generated password:
 
 ```bash
 kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-To try it without an Ingress, install without the `ingress` flags and run `kubectl -n northscope port-forward svc/northscope 18080:80`.
+Set `ingress.className` if the cluster has no default IngressClass. Without an ingress controller, set `ingress.enabled=false` and run `kubectl -n northscope port-forward svc/northscope 18080:80`.
 
 See the [chart values](charts/northscope/values.yaml) and [production access guide](docs/production-access.md) for your own password, GitOps with `auth.existingSecret`, SSO at the edge, NetworkPolicy, and namespace-scoped installs.
 

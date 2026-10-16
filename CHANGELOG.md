@@ -6,7 +6,8 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
-- Rewrote the README around an Ingress-based install with sign-in, replaced the 7.7 MB animation with current light and dark screenshots, and added a Helm NOTES warning when the Ingress has no TLS while sign-in is enabled.
+- The Helm chart now creates an Ingress by default (`ingress.enabled: true`, placeholder host `northscope.example.com`, default IngressClass), so an install only needs the host and, ideally, a TLS Secret. Set `ingress.enabled=false` to keep the previous ClusterIP-only behavior.
+- Rewrote the README around the values-file Ingress install with sign-in, replaced the 7.7 MB animation with current light and dark screenshots, and added Helm NOTES hints for the placeholder host and for an Ingress without TLS while sign-in is enabled.
 - Added built-in username/password sign-in, enabled by default in the Helm chart: the UI, `/api/*`, and the WebSocket now require a session (HMAC-signed, HttpOnly, SameSite=Lax cookie, 12 hours by default), failed sign-ins are throttled per client, and every response carries a restrictive Content-Security-Policy and other security headers. The chart generates a `<release>-auth` Secret with a random password and reuses it on upgrade, or mounts `auth.existingSecret`; `auth.enabled=false` restores open access. Without `-auth-dir` the binary keeps running unauthenticated and logs a warning.
 - Fixed rebuilds of unchanged cluster state republishing the whole topology to every WebSocket client: node positions no longer depend on informer list order.
 - Fixed an IngressClass and a GatewayClass with the same name (such as `nginx`, `traefik`, or `istio`) sharing one controller node: GatewayClass controllers now have their own node with `source: GatewayClass`, and Ingress and Gateway edges stay on their own controller.
