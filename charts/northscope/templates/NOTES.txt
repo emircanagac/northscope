@@ -8,6 +8,17 @@ Ingress:
 {{ range .Values.ingress.hosts }}
   {{ if $.Values.ingress.tls }}https://{{ .host }}{{ else }}http://{{ .host }}{{ end }}
 {{ end }}
+{{- range .Values.ingress.hosts }}
+{{- if eq .host "northscope.example.com" }}
+NOTE: northscope.example.com is the chart's placeholder host. Set
+ingress.hosts[0].host to a DNS name that points at your ingress controller.
+{{ end }}
+{{- end }}
+{{- if and .Values.auth.enabled (not .Values.ingress.tls) }}
+WARNING: The Ingress has no TLS, so the sign-in password and session cookie
+travel over plain HTTP. Set ingress.tls (for example with cert-manager) unless
+TLS is terminated in front of the ingress controller.
+{{ end }}
 
 {{ else }}
 Port-forward:

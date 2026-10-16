@@ -61,24 +61,10 @@ To turn the built-in sign-in off, for example because an identity-aware proxy al
 
 ## Ingress With TLS
 
-Create or provision a TLS Secret for the host, then install NorthScope with ingress enabled:
-
-```bash
-helm upgrade --install northscope northscope/northscope \
-  --namespace northscope \
-  --create-namespace \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set ingress.hosts[0].host=northscope.internal.example.com \
-  --set ingress.tls[0].secretName=northscope-tls \
-  --set ingress.tls[0].hosts[0]=northscope.internal.example.com
-```
-
-For more complex ingress settings, use a values file:
+The chart creates an Ingress by default for the placeholder host `northscope.example.com`. Set your own host, and add a TLS Secret (for example from cert-manager) so the sign-in password and session cookie are encrypted:
 
 ```yaml
 ingress:
-  enabled: true
   className: nginx
   hosts:
     - host: northscope.internal.example.com
@@ -90,6 +76,13 @@ ingress:
       hosts:
         - northscope.internal.example.com
 ```
+
+```bash
+helm upgrade --install northscope northscope/northscope \
+  --namespace northscope --create-namespace -f values.yaml
+```
+
+Leave `className` empty to use the cluster's default IngressClass. To skip the Ingress, for example on a cluster without an ingress controller, set `ingress.enabled=false` and use `kubectl -n northscope port-forward svc/northscope 18080:80`.
 
 ## Authentication At The Edge
 

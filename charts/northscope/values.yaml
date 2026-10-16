@@ -71,8 +71,11 @@ service:
   type: ClusterIP
   port: 80
 
+# NorthScope is exposed through an Ingress by default. Change the host to a DNS
+# name that points at your ingress controller. Leave className empty to use the
+# cluster's default IngressClass, or set it (for example nginx or traefik).
 ingress:
-  enabled: false
+  enabled: true
   className: ""
   annotations: {}
   hosts:
@@ -80,6 +83,13 @@ ingress:
       paths:
         - path: /
           pathType: Prefix
+  # Recommended: serve the UI over HTTPS so the sign-in password and session
+  # cookie are encrypted. The Secret can come from cert-manager or your own
+  # certificate, for example:
+  #   tls:
+  #     - secretName: northscope-tls
+  #       hosts:
+  #         - northscope.example.com
   tls: []
 
 networkPolicy:
