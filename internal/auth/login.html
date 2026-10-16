@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sign in · NorthScope</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main>
+<div class="brand">NorthScope</div>
+<div class="tagline">Kubernetes traffic topology debugger</div>
+<h1>Sign in</h1>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<form method="post" action="/login">
+<input type="hidden" name="next" value="{{.Next}}">
+<label for="username">Username</label>
+<input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button>
+</form>
+</main>
+</body>
+</html>

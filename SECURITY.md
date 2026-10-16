@@ -28,8 +28,24 @@ NorthScope should remain read-only:
 - The application should not exec into Pods, proxy traffic, mutate resources, or create CRDs.
 - The UI should not expose secrets or sensitive object data.
 - The container should run as non-root with a minimal runtime image.
+- The UI, API, and WebSocket should require a sign-in unless an operator explicitly disables it.
 
 Changes that weaken this model require explicit maintainer review.
+
+## Authentication
+
+The Helm chart enables NorthScope's built-in sign-in by default. It is a single shared login meant to keep cluster topology away from anyone who can merely reach the Service; it is not a multi-user identity system.
+
+- Credentials come from files in the directory passed with `-auth-dir`: `username`, `password`, and `session-key`. The chart mounts them read-only from a Secret. NorthScope never reads Secrets through the Kubernetes API, and its RBAC grants no Secret access.
+- Without `-auth-dir`, NorthScope runs without authentication and logs a warning at startup. With `-auth-dir` set, a missing or empty file, or a session key shorter than 32 characters, stops startup.
+- Usernames and passwords are compared as SHA-256 digests in constant time. Failed sign-ins return one generic message.
+- Failed sign-ins are throttled per client address: 5 attempts, then one more every 30 seconds. Forwarded headers are not trusted, so behind an ingress controller or proxy all clients share the proxy's address and its budget.
+- Sessions are stateless HMAC-SHA256-signed cookies (`HttpOnly`, `SameSite=Lax`, `Path=/`, 12 hours by default via `-auth-session-ttl`). `Secure` is set for HTTPS requests or `X-Forwarded-Proto: https`; set `-auth-cookie-secure` (`auth.cookieSecure`) to `true` to always require it. Open WebSocket streams are closed when their session expires.
+- Signing out clears the cookie in that browser only. To revoke every session, change the password or the session key and restart NorthScope; the signing key is derived from both.
+- Sign-in and sign-out forms reject cross-site posts. Every response sets `Content-Security-Policy` (same-origin resources only, `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
+- `/healthz`, `/readyz`, and `/metrics` stay open for probes and Prometheus. `/readyz?verbose` lists resource names only. Set `-auth-protect-metrics` (`auth.protectMetrics`) to require a session for `/metrics` when nothing scrapes it.
+
+Built-in sign-in does not replace TLS. Serve NorthScope over HTTPS whenever traffic leaves a trusted network, and use an identity-aware proxy or SSO gateway in front of it when you need per-user identities or audit trails.
 
 ## Kubernetes Permissions
 
@@ -63,18 +79,20 @@ NorthScope can display internal topology metadata, including:
 
 Published topology snapshots contain only resources connected to supported Ingress, Gateway API, or F5 traffic roots. In default mode, inventory counters remain cluster-wide. With `watchNamespace` set, namespaced counters and routes are limited to that namespace while Node and class metadata remain cluster-scoped.
 
-NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, websocket clients, and per-resource watch health. `/api/status` and the UI health banner include the latest Kubernetes API error for degraded resources, which can name the NorthScope ServiceAccount and the API server address. Keep metrics and status access behind the same trusted boundary as the UI.
+NorthScope also exposes `/metrics` with operational counters and gauges such as readiness, snapshot size, build errors, build duration, websocket clients, and per-resource watch health. `/api/status` and the UI health banner include the latest Kubernetes API error for degraded resources, which can name the NorthScope ServiceAccount and the API server address; `/api/status` requires a session when authentication is enabled. `/metrics` stays open by default, so keep it behind the same trusted boundary as the UI or set `auth.protectMetrics`.
 
 Route health labels are derived from Kubernetes object status, backend references, ports, readiness, and endpoint data. They are not active network probes and must not be treated as proof that an application or external load balancer is reachable.
 
-Run NorthScope behind trusted internal access controls. If exposed through Ingress, configure TLS and authentication at the ingress controller, identity proxy, or platform edge. See [Production Access](docs/production-access.md) for examples.
+Run NorthScope behind trusted internal access controls. Keep the built-in sign-in enabled, and if NorthScope is exposed through Ingress, configure TLS and consider an identity-aware proxy at the ingress controller or platform edge. See [Production Access](docs/production-access.md) for examples.
 
 ## Deployment Hardening
 
 Recommended production settings:
 
 - use a private/internal hostname
-- enable TLS and authentication before exposing the UI outside a trusted network
+- keep `auth.enabled=true`, and enable TLS before exposing the UI outside a trusted network
+- set `auth.cookieSecure=true` when every browser reaches NorthScope over HTTPS
+- manage credentials with `auth.existingSecret` when the chart is rendered by `helm template` or a GitOps tool
 - enable `networkPolicy` where your CNI enforces NetworkPolicy
 - enable `podDisruptionBudget` when running more than one replica
 - keep `securityContext` and `podSecurityContext` hardened

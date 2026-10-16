@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { redirectToLogin } from '../auth';
 
 interface VersionResponse {
   version?: unknown;
@@ -23,6 +24,10 @@ export function useAppVersion(): string {
       signal: controller.signal,
     })
       .then((response) => {
+        if (response.status === 401) {
+          redirectToLogin();
+          return {} as VersionResponse;
+        }
         if (!response.ok) {
           throw new Error(`version request failed with ${response.status}`);
         }

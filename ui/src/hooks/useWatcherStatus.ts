@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { redirectToLogin } from '../auth';
 import type { WatcherStatus } from '../watchHealth';
 
 // useWatcherStatus polls /api/status while active. The topology stream only
@@ -22,6 +23,10 @@ export function useWatcherStatus(active: boolean, intervalMs = 5000): WatcherSta
         signal: controller.signal,
       })
         .then((response) => {
+          if (response.status === 401) {
+            controller.abort();
+            redirectToLogin();
+          }
           if (!response.ok) {
             throw new Error(`status request failed with ${response.status}`);
           }

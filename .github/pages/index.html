@@ -147,8 +147,9 @@ helm repo update
 helm upgrade --install northscope northscope/northscope \
   --namespace northscope \
   --create-namespace</code></pre>
-    <p>Open the UI through a port-forward, then search for and select a host route:</p>
-    <pre><code>kubectl -n northscope port-forward svc/northscope 18080:80
+    <p>Open the UI through a port-forward and sign in as <code>admin</code> with the generated password, then search for and select a host route:</p>
+    <pre><code>kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl -n northscope port-forward svc/northscope 18080:80
 # http://localhost:18080</code></pre>
     <p>
       For Ingress access, TLS, and other options, see the

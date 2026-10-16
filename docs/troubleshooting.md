@@ -17,6 +17,7 @@ Expected startup logs include:
 
 ```text
 NorthScope starting
+NorthScope authentication enabled for user "admin" (cookie secure: auto, metrics protected: false)
 NorthScope compatibility: using EndpointSlice API discovery.k8s.io/v1
 HTTP server listening on :8080
 NorthScope Kubernetes caches synced
@@ -29,11 +30,14 @@ If `/readyz` returns `503`, the watcher has not generated the first topology sna
 NorthScope still waiting for Kubernetes caches after 30s; unsynced: pods (last error: failed to list *v1.Pod: pods is forbidden: ...)
 ```
 
-The same information is available over HTTP:
+The same information is available over HTTP. `/api/status` requires a session when the built-in sign-in is enabled, so sign in with curl first:
 
 ```bash
 curl http://localhost:18080/readyz?verbose
-curl http://localhost:18080/api/status
+curl -c /tmp/northscope.cookies -d username=admin \
+  --data-urlencode "password=$(kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.password}' | base64 -d)" \
+  http://localhost:18080/login
+curl -b /tmp/northscope.cookies http://localhost:18080/api/status
 ```
 
 Grant the missing read-only permission or restore API server connectivity. NorthScope retries with backoff and does not need a restart.
@@ -59,6 +63,31 @@ kubectl -n northscope create rolebinding northscope-psp --role=northscope-psp --
 
 On large clusters, raise `resources.limits.memory` (default `256Mi`) or set `watchNamespace` if the Pod is `OOMKilled`. NorthScope caches Pods, Services, Endpoints, and EndpointSlices for the watched scope.
 
+## Signing In
+
+The Helm chart enables the built-in sign-in. The username is `admin` unless `auth.username` or `auth.existingSecret` says otherwise. Read the generated password from the release's Secret:
+
+```bash
+kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+If the Pod does not start after enabling authentication, check its events and logs:
+
+- `MountVolume.SetUp failed for volume "auth"` in `kubectl describe pod`, for example `references non-existent secret key: session-key`: the `auth.existingSecret` Secret must contain `username`, `password`, and `session-key`.
+- `configure authentication: ...` in the logs: one of those files is empty, or the session key is shorter than 32 characters.
+
+If the sign-in form returns to the login page or keeps asking again after a successful sign-in:
+
+- The browser rejected the session cookie. With `auth.cookieSecure=true` the cookie is only sent over HTTPS, so a plain-HTTP `kubectl port-forward` cannot keep a session. Use `auto`, or reach NorthScope over HTTPS.
+- A proxy in front of NorthScope sends `X-Forwarded-Proto: https` while the browser uses plain HTTP. Fix the proxy or set `auth.cookieSecure=false` for that environment.
+- The password or the session key changed, or the Secret was recreated by a `helm template`-based deployment. Sessions signed with the previous values are no longer valid; sign in again and use `auth.existingSecret` for GitOps installs.
+
+`Too many failed sign-in attempts` means the client address used up its 5 failed attempts. One more attempt becomes available every 30 seconds. Behind an ingress controller all clients share the controller's address and therefore this limit.
+
+After a password change through Helm, the Deployment rolls automatically. After rotating an `auth.existingSecret` Secret, restart NorthScope with `kubectl -n northscope rollout restart deploy/northscope`.
+
+If the log shows `WARNING: authentication is disabled`, NorthScope was started without `-auth-dir` (for example with `auth.enabled=false`) and anyone who can reach it can view the topology.
+
 ## The UI Shows Degraded Or An Old Snapshot
 
 The header shows when the current snapshot was generated, for example `Snapshot 3m ago`; hover over it for the exact time and snapshot version. NorthScope sends a new snapshot only when topology or watch health changes, so an old snapshot on a healthy instance means nothing changed.
@@ -74,7 +103,7 @@ A resource stays degraded until a watch for it starts or delivers an event again
 After the first snapshot, degraded resources do not fail `/readyz`, and `/healthz` always succeeds while the process runs. Restarting or unrouting NorthScope does not fix RBAC or API server problems; it would only hide the last known topology. Inspect the details instead:
 
 ```bash
-curl http://localhost:18080/api/status
+curl -b /tmp/northscope.cookies http://localhost:18080/api/status
 curl http://localhost:18080/readyz?verbose
 kubectl auth can-i watch pods --as=system:serviceaccount:northscope:northscope -A
 ```

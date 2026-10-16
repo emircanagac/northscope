@@ -84,6 +84,9 @@ jobs:
             --set podDisruptionBudget.enabled=true \
             | grep --quiet '^apiVersion: policy/v1beta1$'
 
+      - name: Check authentication rendering
+        run: bash hack/check-helm-auth.sh
+
       - name: Render chart repository landing page
         run: bash hack/render-helm-repo-page.sh 0.0.0-ci "$RUNNER_TEMP/index.html"
 

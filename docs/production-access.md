@@ -2,12 +2,62 @@
 
 NorthScope exposes Kubernetes topology data, including internal hostnames, Services, Pods, Nodes, and endpoint addresses. Keep it behind trusted internal access controls.
 
-NorthScope does not include built-in user authentication. In production, prefer one of these patterns:
+The Helm chart enables a built-in sign-in by default. In production, combine it with:
 
-- expose NorthScope through an internal Ingress with TLS
-- require authentication at the ingress controller, identity proxy, VPN, or zero-trust access layer
-- restrict network access with a NetworkPolicy and private ingress/load balancer
-- grant repository and cluster access only to operators who are allowed to inspect topology metadata
+- an internal Ingress with TLS
+- optionally, authentication at the ingress controller, identity proxy, VPN, or zero-trust access layer when you need per-user identities
+- a NetworkPolicy and a private ingress or load balancer
+- repository and cluster access only for operators who are allowed to inspect topology metadata
+
+## Built-in Sign-in
+
+NorthScope asks for a username and password before it shows the UI, API, or WebSocket stream. The username defaults to `admin`. On first install the chart generates a random 24-character password and a session key in the Secret `<release>-auth` (`northscope-auth` for a release named `northscope`). Read them with:
+
+```bash
+kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.username}' | base64 -d; echo
+kubectl -n northscope get secret northscope-auth -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+`helm upgrade` reuses the stored password and session key through Helm `lookup`, so upgrades keep credentials and signed-in sessions. To choose a password, set `auth.password` (prefer `--set-file` or a values file that is not committed). Changing the password rolls the Pod and signs every browser out.
+
+### helm template, Argo CD, and Flux
+
+`lookup` returns nothing when Helm cannot query the cluster, which is the case for `helm template`, `helm install --dry-run`, and GitOps tools that render charts offline. Each render would then generate a new password and session key. Create the Secret yourself, for example with an external secret manager or Sealed Secrets, and point the chart at it:
+
+```bash
+kubectl -n northscope create secret generic northscope-login \
+  --from-literal=username=admin \
+  --from-literal=password="$(openssl rand -base64 24)" \
+  --from-literal=session-key="$(openssl rand -hex 32)"
+```
+
+```yaml
+auth:
+  existingSecret: northscope-login
+```
+
+The Secret must contain `username`, `password`, and `session-key` (at least 32 characters). NorthScope reads them at startup, so restart it after rotating the Secret:
+
+```bash
+kubectl -n northscope rollout restart deploy/northscope
+```
+
+### Options
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `auth.enabled` | `true` | Require a sign-in. `false` serves the UI and API to anyone who can reach the Service. |
+| `auth.username` | `admin` | Login name for the chart-managed Secret. |
+| `auth.password` | `""` | Password for the chart-managed Secret. Empty generates one on install and keeps it on upgrade. |
+| `auth.existingSecret` | `""` | Use this Secret instead of creating one. |
+| `auth.cookieSecure` | `auto` | Session cookie `Secure` attribute: `auto` (HTTPS requests or `X-Forwarded-Proto: https`), `true`, or `false`. |
+| `auth.protectMetrics` | `false` | Require a session for `/metrics`. Prometheus cannot sign in, so leave this off when Prometheus scrapes NorthScope. |
+
+Sessions last 12 hours. Pass `-auth-session-ttl` through `extraArgs` to change that, for example `extraArgs: ["-auth-session-ttl=8h"]`. Behind a TLS-terminating ingress controller that sets `X-Forwarded-Proto`, `auto` already marks the cookie `Secure`; set `auth.cookieSecure=true` when browsers only ever use HTTPS.
+
+Failed sign-ins are throttled per client address. NorthScope ignores forwarded headers for this, so behind an ingress controller every client shares the controller's budget of 5 failed attempts plus one every 30 seconds.
+
+To turn the built-in sign-in off, for example because an identity-aware proxy already authenticates every request, set `auth.enabled=false`. NorthScope logs a warning at startup when it runs without authentication.
 
 ## Ingress With TLS
 
@@ -43,7 +93,7 @@ ingress:
 
 ## Authentication At The Edge
 
-Authentication should be enforced before traffic reaches NorthScope. Common options are:
+Edge authentication adds per-user identity, SSO, and audit logs on top of the built-in sign-in, or replaces it when you set `auth.enabled=false`. Common options are:
 
 - an ingress-controller auth feature
 - an identity-aware proxy such as oauth2-proxy or a platform gateway
@@ -112,7 +162,7 @@ The chart defaults are a starting point, not a universal production sizing targe
 ## Operational Notes
 
 - Use HTTPS for browser access.
-- Keep `/metrics` and `/api/status` behind the same trusted network or scraping boundary as the UI.
+- Keep `/metrics` behind the same trusted network or scraping boundary as the UI, or set `auth.protectMetrics=true` when nothing scrapes it. `/api/status` requires a session when the built-in sign-in is enabled.
 - Keep NorthScope internal unless you have a deliberate public access control layer.
 - Review `SECURITY.md` before enabling access for a production cluster.
 - Prefer version-pinned installs for production change control.

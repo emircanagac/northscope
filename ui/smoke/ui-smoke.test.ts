@@ -25,6 +25,7 @@ import {
   streamStatusLabel,
   type WatcherStatus,
 } from '../src/watchHealth.ts';
+import { loginRedirectPath, sessionCheckFromStatus } from '../src/auth.ts';
 
 function route(overrides: Partial<RouteItem>): RouteItem {
   const item = {
@@ -274,4 +275,13 @@ test('snapshot age is relative to generatedAt and tolerates clock skew', () => {
   assert.equal(formatSnapshotAge(generatedAt, at(2 * 86400)), '2d ago');
   assert.equal(formatSnapshotAge('0001-01-01T00:00:00Z', at(0)), '');
   assert.equal(formatSnapshotAge('not a date', at(0)), '');
+});
+
+test('401 responses send the user to the login page and keep the current view as next', () => {
+  assert.equal(sessionCheckFromStatus(401), 'unauthenticated');
+  assert.equal(sessionCheckFromStatus(200), 'authenticated');
+  assert.equal(sessionCheckFromStatus(502), 'unknown');
+  assert.equal(loginRedirectPath('/', ''), '/login');
+  assert.equal(loginRedirectPath('/', '?namespace=demo'), '/login?next=%2F%3Fnamespace%3Ddemo');
+  assert.equal(loginRedirectPath('/login', '?next=%2F'), '/login');
 });

@@ -1,0 +1,23 @@
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{display:flex;align-items:center;justify-content:center;padding:16px;background:#f1f5f9;color:#020617;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{width:100%;max-width:360px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:24px;box-shadow:0 1px 2px rgb(15 23 42/.06)}
+.brand{font-size:14px;font-weight:900;letter-spacing:-.025em}
+.tagline{margin-top:2px;font-size:11px;font-weight:500;color:#64748b}
+h1{margin:20px 0 16px;font-size:16px;font-weight:900}
+label{display:block;margin-top:12px;font-size:11px;font-weight:900;letter-spacing:.025em;text-transform:uppercase;color:#64748b}
+input{display:block;width:100%;height:36px;margin-top:6px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;padding:0 10px;font:inherit;font-size:13px;color:inherit}
+input:focus{outline:2px solid #94a3b8;outline-offset:1px;border-color:#94a3b8}
+button{width:100%;height:36px;margin-top:20px;border:0;border-radius:6px;background:#020617;color:#fff;font:inherit;font-size:12px;font-weight:900;cursor:pointer}
+button:hover{background:#1e293b}
+.error{margin:0 0 4px;border:1px solid #fecaca;border-radius:6px;background:#fef2f2;padding:8px 10px;font-size:12px;font-weight:700;color:#b91c1c}
+@media (prefers-color-scheme:dark){
+body{background:#020617;color:#f1f5f9}
+main{border-color:#1e293b;background:#0f172a;box-shadow:none}
+.tagline,label{color:#94a3b8}
+input{border-color:#334155;background:#020617}
+input:focus{outline-color:#64748b;border-color:#64748b}
+button{background:#fff;color:#020617}
+button:hover{background:#e2e8f0}
+.error{border-color:#7f1d1d;background:#450a0a;color:#fecaca}
+}
