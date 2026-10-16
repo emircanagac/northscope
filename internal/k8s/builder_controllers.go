@@ -196,6 +196,73 @@ func matchingPodsForService(service *corev1.Service, podsByNamespace map[string]
 	return pods
 }
 
+// ingressControllerServiceTokens identify controller-like Services when an
+// Ingress status address matches more than one Service.
+var ingressControllerServiceTokens = []string{
+	"ingress", "controller", "traefik", "nginx", "haproxy", "contour", "envoy", "kong", "istio", "gateway",
+}
+
+// servicesByLoadBalancerAddress indexes exposed Services by the load balancer
+// addresses and external IPs that ingress controllers publish to Ingress status.
+func servicesByLoadBalancerAddress(services []*corev1.Service) map[string][]*corev1.Service {
+	index := map[string][]*corev1.Service{}
+	for _, service := range services {
+		if service.Spec.Type != corev1.ServiceTypeLoadBalancer && service.Spec.Type != corev1.ServiceTypeNodePort {
+			continue
+		}
+		for _, address := range loadBalancerAddresses(service) {
+			index[address] = append(index[address], service)
+		}
+	}
+	return index
+}
+
+// ingressStatusControllerService returns the Service whose address the
+// controller wrote into the Ingress status. This links Ingresses to controllers
+// that do not have an IngressClass object, such as Traefik on older k3s.
+func ingressStatusControllerService(ingress *networkingv1.Ingress, servicesByAddress map[string][]*corev1.Service) *corev1.Service {
+	candidates := map[string]*corev1.Service{}
+	for _, address := range ingressLoadBalancerAddresses(ingress) {
+		for _, service := range servicesByAddress[address] {
+			candidates[namespacedKey(service.Namespace, service.Name)] = service
+		}
+	}
+	if len(candidates) == 1 {
+		for _, service := range candidates {
+			return service
+		}
+	}
+	var match *corev1.Service
+	for _, service := range candidates {
+		if !looksLikeIngressControllerService(service) {
+			continue
+		}
+		if match != nil {
+			return nil
+		}
+		match = service
+	}
+	return match
+}
+
+func looksLikeIngressControllerService(service *corev1.Service) bool {
+	terms := []string{service.Name}
+	for key, value := range service.Labels {
+		terms = append(terms, key, value)
+	}
+	text := strings.ToLower(strings.Join(terms, " "))
+	for _, token := range ingressControllerServiceTokens {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func statusControllerNodeID(service *corev1.Service) string {
+	return nodeID(models.NodeKindController, "", "service:"+namespacedKey(service.Namespace, service.Name))
+}
+
 func loadBalancerAddresses(service *corev1.Service) []string {
 	addresses := make([]string, 0, len(service.Status.LoadBalancer.Ingress)+len(service.Spec.ExternalIPs))
 	for _, ingress := range service.Status.LoadBalancer.Ingress {

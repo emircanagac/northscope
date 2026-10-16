@@ -67,6 +67,7 @@ type Authenticator struct {
 	passwordDigest [sha256.Size]byte
 	signer         sessionSigner
 	throttle       *loginThrottle
+	proxyThrottle  *loginThrottle
 	cookieSecure   CookieSecureMode
 	protectMetrics bool
 	now            func() time.Time
@@ -95,6 +96,7 @@ func New(creds Credentials, opts Options) (*Authenticator, error) {
 		passwordDigest: sha256.Sum256([]byte(creds.Password)),
 		signer:         newSessionSigner(creds, ttl),
 		throttle:       newLoginThrottle(loginBurst, loginRefill),
+		proxyThrottle:  newLoginThrottle(proxyLoginBurst, proxyLoginRefill),
 		cookieSecure:   opts.CookieSecure,
 		protectMetrics: opts.ProtectMetrics,
 		now:            now,
@@ -190,10 +192,10 @@ func (a *Authenticator) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 	}
 	next := safeNext(r.PostForm.Get("next"))
 
-	client := clientKey(r)
+	client, proxy := loginClient(r)
 	now := a.now()
-	if ok, wait := a.throttle.allow(client, now); !ok {
-		log.Printf("auth: sign-in throttled for client %s", client)
+	if ok, wait := a.allowLogin(client, proxy, now); !ok {
+		log.Printf("auth: sign-in throttled for client %s%s", client, viaProxy(proxy))
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 		renderLogin(w, http.StatusTooManyRequests, next, tooManyAttemptsMessage)
 		return
@@ -201,7 +203,10 @@ func (a *Authenticator) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 
 	if !a.credentialsMatch(r.PostForm.Get("username"), r.PostForm.Get("password")) {
 		a.throttle.fail(client, now)
-		log.Printf("auth: failed sign-in from client %s", client)
+		if proxy != "" {
+			a.proxyThrottle.fail(proxy, now)
+		}
+		log.Printf("auth: failed sign-in from client %s%s", client, viaProxy(proxy))
 		renderLogin(w, http.StatusUnauthorized, next, invalidCredentialsMessage)
 		return
 	}
@@ -355,13 +360,86 @@ func sameOrigin(r *http.Request) bool {
 	return strings.EqualFold(u.Host, r.Host)
 }
 
-// clientKey identifies the client for login throttling. Forwarded headers are
-// ignored because clients can forge them; behind a proxy every client shares
-// the proxy's address.
-func clientKey(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+// allowLogin applies the per-client budget and, for forwarded clients, the
+// wider per-proxy budget that stops forged X-Forwarded-For values from
+// bypassing the per-client limit.
+func (a *Authenticator) allowLogin(client, proxy string, now time.Time) (bool, time.Duration) {
+	ok, wait := a.throttle.allow(client, now)
+	if proxy == "" {
+		return ok, wait
 	}
-	return host
+	proxyOK, proxyWait := a.proxyThrottle.allow(proxy, now)
+	if proxyWait > wait {
+		wait = proxyWait
+	}
+	return ok && proxyOK, wait
+}
+
+func viaProxy(proxy string) string {
+	if proxy == "" {
+		return ""
+	}
+	return " via " + proxy
+}
+
+// trustedProxyNetworks are private, shared, and loopback ranges. A sign-in from
+// one of them usually arrives through an in-cluster ingress controller, which
+// appends the real client address to X-Forwarded-For.
+var trustedProxyNetworks = mustParseCIDRs(
+	"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+	"127.0.0.0/8", "::1/128", "fc00::/7",
+)
+
+func mustParseCIDRs(values ...string) []*net.IPNet {
+	networks := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		_, network, err := net.ParseCIDR(value)
+		if err != nil {
+			panic(err)
+		}
+		networks = append(networks, network)
+	}
+	return networks
+}
+
+// loginClient identifies the client for login throttling. When the peer is a
+// trusted proxy, the client is the last X-Forwarded-For entry, which the proxy
+// appended itself and the caller cannot forge, or X-Real-IP; proxy is then the
+// peer address. Forwarded headers from any other peer are ignored.
+func loginClient(r *http.Request) (client, proxy string) {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	peerIP := net.ParseIP(peer)
+	if peerIP == nil || !isTrustedProxy(peerIP) {
+		return peer, ""
+	}
+	forwarded := lastForwardedFor(r.Header.Values("X-Forwarded-For"))
+	if forwarded == "" {
+		forwarded = strings.TrimSpace(r.Header.Get("X-Real-IP"))
+	}
+	if net.ParseIP(forwarded) == nil {
+		return peer, ""
+	}
+	return forwarded, peer
+}
+
+func isTrustedProxy(ip net.IP) bool {
+	for _, network := range trustedProxyNetworks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func lastForwardedFor(values []string) string {
+	entries := strings.Split(strings.Join(values, ","), ",")
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entry := strings.TrimSpace(entries[i]); entry != "" {
+			return entry
+		}
+	}
+	return ""
 }

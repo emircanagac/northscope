@@ -34,7 +34,29 @@ func BuildTopologyWithResources(
 	return BuildTopologyWithResourcesAndEndpoints(ingresses, ingressClasses, services, pods, nodes, externalResources, nil, flattenEndpointSlices(endpointSlices))
 }
 
+// TopologyOptions describe how the builder inputs were collected.
+type TopologyOptions struct {
+	// WatchNamespace is set when only one namespace is watched. References to
+	// objects in other namespaces cannot be resolved and are reported as
+	// outside the watch scope instead of missing.
+	WatchNamespace string
+}
+
 func BuildTopologyWithResourcesAndEndpoints(
+	ingresses []*networkingv1.Ingress,
+	ingressClasses []*networkingv1.IngressClass,
+	services []*corev1.Service,
+	pods []*corev1.Pod,
+	nodes []*corev1.Node,
+	externalResources []ExternalResource,
+	endpoints []*corev1.Endpoints,
+	endpointSlices []*discoveryv1.EndpointSlice,
+) models.TopologySnapshot {
+	return BuildTopologyWithOptions(TopologyOptions{}, ingresses, ingressClasses, services, pods, nodes, externalResources, endpoints, endpointSlices)
+}
+
+func BuildTopologyWithOptions(
+	options TopologyOptions,
 	ingresses []*networkingv1.Ingress,
 	ingressClasses []*networkingv1.IngressClass,
 	services []*corev1.Service,
@@ -116,11 +138,39 @@ func BuildTopologyWithResourcesAndEndpoints(
 		}
 	}
 
+	// An Ingress without a resolvable class can still be tied to the controller
+	// that published its status address, such as k3s Traefik on clusters where
+	// it has no IngressClass object.
+	statusControllerByIngress := map[string]string{}
+	statusControllerByService := map[string]string{}
+	servicesByAddress := servicesByLoadBalancerAddress(services)
+	for _, ingress := range ingresses {
+		if ingressControllerClassName(ingress, ingressClassesByName) != "" {
+			continue
+		}
+		svc := ingressStatusControllerService(ingress, servicesByAddress)
+		if svc == nil {
+			continue
+		}
+		serviceKey := namespacedKey(svc.Namespace, svc.Name)
+		controllerID := ""
+		if className := matchingIngressClassName(svc, servicePodsCache[serviceKey], controllerClassesByName); className != "" {
+			controllerID = controllerNodeID(className)
+		} else {
+			controllerID = statusControllerNodeID(svc)
+			statusControllerByService[serviceKey] = controllerID
+			builder.addStatusController(svc)
+		}
+		statusControllerByIngress[namespacedKey(ingress.Namespace, ingress.Name)] = controllerID
+	}
+
 	for _, svc := range services {
 		servicePods := servicePodsCache[namespacedKey(svc.Namespace, svc.Name)]
 		targetNodeID := nodeID(models.NodeKindService, svc.Namespace, svc.Name)
 		if controllerClassName := matchingIngressClassName(svc, servicePods, controllerClassesByName); controllerClassName != "" {
 			targetNodeID = controllerNodeID(controllerClassName)
+		} else if controllerID := statusControllerByService[namespacedKey(svc.Namespace, svc.Name)]; controllerID != "" {
+			targetNodeID = controllerID
 		}
 
 		switch svc.Spec.Type {
@@ -150,6 +200,7 @@ func BuildTopologyWithResourcesAndEndpoints(
 		}
 	}
 
+	endpointPodsByServiceKey := endpointPodsByService(endpointSlices, endpoints, endpointSliceServiceKeys, podsByName, podsByIP)
 	for _, ingress := range ingresses {
 		builder.addIngress(ingress)
 		for _, host := range ingressHosts(ingress) {
@@ -163,19 +214,28 @@ func BuildTopologyWithResourcesAndEndpoints(
 			})
 			builder.addEdge(lbID, nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name), "fronts", "Ingress status")
 		}
-		if controllerClassName := ingressControllerClassName(ingress, ingressClassesByName); controllerClassName != "" {
-			builder.addEdge(
-				controllerNodeID(controllerClassName),
-				nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
-				"controls",
-				"IngressClass",
-			)
+		// controllerName is only checked for presence by the route diagnosis.
+		controllerName := ingressControllerClassName(ingress, ingressClassesByName)
+		controllerID, controllerSource := "", ""
+		if controllerName != "" {
+			controllerID, controllerSource = controllerNodeID(controllerName), "IngressClass"
+		} else if id := statusControllerByIngress[namespacedKey(ingress.Namespace, ingress.Name)]; id != "" {
+			controllerName, controllerID, controllerSource = id, id, "Ingress status"
 		}
-		controllerClassName := ingressControllerClassName(ingress, ingressClassesByName)
+		if controllerID != "" {
+			builder.addEdge(controllerID, nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name), "controls", controllerSource)
+		}
 		for _, route := range ingressRoutes(ingress) {
 			svc := servicesByKey[namespacedKey(ingress.Namespace, route.ServiceName)]
 			pods := servicePodsCache[namespacedKey(ingress.Namespace, route.ServiceName)]
-			diagnosis := diagnoseIngressRoute(ingress, route, controllerClassName, svc, pods, endpointStatsByService[namespacedKey(ingress.Namespace, route.ServiceName)])
+			serviceKey := namespacedKey(ingress.Namespace, route.ServiceName)
+			nonEndpointPods := 0
+			if svc != nil {
+				if portName, ok := servicePortName(svc, route.ServicePort); ok {
+					nonEndpointPods = countNonEndpointPods(pods, endpointPodsByServiceKey[serviceKey], portName)
+				}
+			}
+			diagnosis := diagnoseIngressRoute(ingress, route, controllerName, svc, pods, endpointStatsByService[serviceKey], nonEndpointPods)
 			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
 			builder.addIngressRoute(ingress, route, diagnosis)
 			builder.addEdge(
@@ -191,7 +251,7 @@ func BuildTopologyWithResourcesAndEndpoints(
 	}
 
 	for _, resource := range externalResources {
-		builder.addExternalResource(resource, servicesByKey, externalResourcesByKey, referenceGrants)
+		builder.addExternalResource(resource, servicesByKey, externalResourcesByKey, referenceGrants, options.WatchNamespace)
 	}
 
 	for _, svc := range services {

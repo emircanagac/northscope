@@ -8,6 +8,15 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 No unreleased changes.
 
+## 1.1.0 - 2026-10-16
+
+- Linked Ingresses without a resolvable IngressClass to the controller whose Service load balancer address appears in the Ingress status, so controllers that never created an IngressClass (such as Traefik on k3s 1.21) show their LoadBalancer and NodePort entry path instead of a missing-controller warning.
+- Routes now warn when running Pods match a Service selector but are not endpoints for the Service port the Ingress uses (for example a named `targetPort` the Pods do not expose: the EndpointSlice lists them without that port), because those Pods receive no traffic.
+- ExternalName Services without ports no longer get a false "no matching port" error.
+- With `watchNamespace` set, Gateway API references to Gateways or Services in other namespaces are reported as outside the watch scope instead of as missing.
+- Sign-in throttling no longer locks every user out behind an ingress controller: clients forwarded by a proxy on a private, shared, or loopback address are identified by the address the proxy appended to `X-Forwarded-For` (or `X-Real-IP`), and a wider per-proxy budget stops forged forwarded addresses from bypassing the limit.
+- Gateway API and F5 CIS resources are now read from their informer caches instead of being re-listed from the API server whenever one of them changed, which removes a LIST storm on clusters with frequent Gateway or route status updates. Served CRDs are rediscovered every 2 minutes in the background, so CRDs installed, removed, or upgraded after startup start or stop their watches.
+
 ## 1.0.0 - 2026-10-16
 
 First public release.

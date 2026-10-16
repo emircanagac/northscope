@@ -55,7 +55,7 @@ kubectl -n northscope rollout restart deploy/northscope
 
 Sessions last 12 hours. Pass `-auth-session-ttl` through `extraArgs` to change that, for example `extraArgs: ["-auth-session-ttl=8h"]`. Behind a TLS-terminating ingress controller that sets `X-Forwarded-Proto`, `auto` already marks the cookie `Secure`; set `auth.cookieSecure=true` when browsers only ever use HTTPS.
 
-Failed sign-ins are throttled per client address. NorthScope ignores forwarded headers for this, so behind an ingress controller every client shares the controller's budget of 5 failed attempts plus one every 30 seconds.
+Failed sign-ins are throttled per client: 5 failed attempts, then one more every 30 seconds. When the request comes from a private, shared, or loopback address (an in-cluster ingress controller), NorthScope identifies the client by the last `X-Forwarded-For` entry, which the controller appends itself, or by `X-Real-IP`; forwarded headers from other addresses are ignored. All clients forwarded by one proxy also share a wider budget of 50 failed attempts plus one every 2 seconds, so forged `X-Forwarded-For` values cannot bypass the limit. If another load balancer sits in front of the ingress controller, the client is that load balancer's address.
 
 To turn the built-in sign-in off, for example because an identity-aware proxy already authenticates every request, set `auth.enabled=false`. NorthScope logs a warning at startup when it runs without authentication.
 

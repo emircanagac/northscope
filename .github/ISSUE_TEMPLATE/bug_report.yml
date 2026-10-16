@@ -24,7 +24,7 @@ body:
     attributes:
       label: NorthScope version
       description: Image tag, commit SHA, or chart version.
-      placeholder: ghcr.io/emircanagac/northscope:1.0.0
+      placeholder: ghcr.io/emircanagac/northscope:1.1.0
   - type: input
     id: kubernetes
     attributes:

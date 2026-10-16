@@ -77,6 +77,7 @@ func diagnoseIngressRoute(
 	service *corev1.Service,
 	servicePods []*corev1.Pod,
 	stats endpointStats,
+	nonEndpointPods int,
 ) routeDiagnosis {
 	baseKubectl := fmt.Sprintf("kubectl describe ingress %s -n %s", ingress.Name, ingress.Namespace)
 	if route.ResourceKind != "" {
@@ -99,7 +100,10 @@ func diagnoseIngressRoute(
 			Confidence: "Certain",
 		}
 	}
-	if !serviceHasBackendPort(service, route.ServicePort) {
+	// An ExternalName Service without ports passes the Ingress backend port
+	// straight to the upstream, so there is no Service port to match.
+	externalNameWithoutPorts := service.Spec.Type == corev1.ServiceTypeExternalName && len(service.Spec.Ports) == 0
+	if !externalNameWithoutPorts && !serviceHasBackendPort(service, route.ServicePort) {
 		return routeDiagnosis{
 			Status:     "Error",
 			Severity:   "error",
@@ -167,6 +171,16 @@ func diagnoseIngressRoute(
 			Message:    fmt.Sprintf("Selector-less Service %q has no EndpointSlice or Endpoints data.", service.Name),
 			NextStep:   "Verify manually managed EndpointSlices, legacy Endpoints, or external backend wiring.",
 			Kubectl:    fmt.Sprintf("kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o yaml; kubectl get endpoints %s -n %s -o yaml", service.Namespace, service.Name, service.Name, service.Namespace),
+			Confidence: "Certain",
+		}
+	}
+	if nonEndpointPods > 0 {
+		return routeDiagnosis{
+			Status:     "Warning",
+			Severity:   "warning",
+			Message:    fmt.Sprintf("%d running Pod(s) match the selector of Service %q but are not endpoints, so they receive no traffic.", nonEndpointPods, service.Name),
+			NextStep:   "Check that the Pods expose the Service targetPort (named ports must match a container port name) and that their readiness gates are satisfied.",
+			Kubectl:    fmt.Sprintf("kubectl get svc %s -n %s -o yaml; kubectl get endpointslice -n %s -l kubernetes.io/service-name=%s -o wide", service.Name, service.Namespace, service.Namespace, service.Name),
 			Confidence: "Certain",
 		}
 	}

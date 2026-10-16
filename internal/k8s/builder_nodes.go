@@ -136,6 +136,26 @@ func (b *topologyBuilder) addGatewayClassController(className, controller string
 	b.addControllerNode(gatewayClassControllerNodeID(className), className, controller, "GatewayClass", "Configured")
 }
 
+// addStatusController represents an ingress controller known only through the
+// Service whose load balancer address appears in an Ingress status.
+func (b *topologyBuilder) addStatusController(service *corev1.Service) {
+	b.addNode(models.Node{
+		ID:   statusControllerNodeID(service),
+		Type: "northscopeNode",
+		Data: models.NodeData{
+			Label:  service.Name,
+			Kind:   models.NodeKindController,
+			Name:   service.Name,
+			Status: "Inferred",
+			Properties: map[string]string{
+				"source":     "Ingress status address",
+				"controller": "Service " + displayName(service.Namespace, service.Name),
+				"service":    displayName(service.Namespace, service.Name),
+			},
+		},
+	})
+}
+
 func (b *topologyBuilder) addControllerNode(id, className, controller, source, status string) {
 	properties := map[string]string{
 		"source": source,
@@ -405,7 +425,11 @@ func (b *topologyBuilder) addExternalResource(
 	servicesByKey map[string]*corev1.Service,
 	externalResourcesByKey map[string]ExternalResource,
 	referenceGrants []ExternalResource,
+	watchNamespace string,
 ) {
+	outsideWatchScope := func(namespace string) bool {
+		return watchNamespace != "" && namespace != watchNamespace
+	}
 	switch resource.Kind {
 	case ExternalKindGatewayClass:
 		controller := resource.Properties["controllerName"]
@@ -434,7 +458,7 @@ func (b *topologyBuilder) addExternalResource(
 		}
 	case ExternalKindHTTPRoute, ExternalKindGRPCRoute, ExternalKindTLSRoute, ExternalKindTCPRoute, ExternalKindUDPRoute:
 		routeID := routeNodeID(resource.Namespace, resource.Name, string(resource.Kind))
-		var referenceErrors []string
+		var referenceErrors, outOfScope []string
 		for _, parent := range resource.ParentRefs {
 			if !isGatewayParent(parent) {
 				referenceErrors = append(referenceErrors, "Unsupported parent "+parent.Kind+" "+parent.Name)
@@ -446,7 +470,11 @@ func (b *topologyBuilder) addExternalResource(
 			}
 			parentResource := ExternalResource{Kind: ExternalKindGateway, Namespace: namespace, Name: parent.Name}
 			if _, ok := externalResourcesByKey[externalResourceKey(parentResource)]; !ok {
-				referenceErrors = append(referenceErrors, "Gateway "+displayName(namespace, parent.Name)+" was not found")
+				if outsideWatchScope(namespace) {
+					outOfScope = append(outOfScope, "Gateway "+displayName(namespace, parent.Name))
+				} else {
+					referenceErrors = append(referenceErrors, "Gateway "+displayName(namespace, parent.Name)+" was not found")
+				}
 				continue
 			}
 			edgeKind := "attaches"
@@ -465,7 +493,11 @@ func (b *topologyBuilder) addExternalResource(
 				namespace = resource.Namespace
 			}
 			if _, ok := servicesByKey[namespacedKey(namespace, backend.Name)]; !ok {
-				referenceErrors = append(referenceErrors, "Service "+displayName(namespace, backend.Name)+" was not found")
+				if outsideWatchScope(namespace) {
+					outOfScope = append(outOfScope, "Service "+displayName(namespace, backend.Name))
+				} else {
+					referenceErrors = append(referenceErrors, "Service "+displayName(namespace, backend.Name)+" was not found")
+				}
 				continue
 			}
 			if namespace != resource.Namespace && !backendReferenceGranted(resource, backend, namespace, referenceGrants) {
@@ -474,12 +506,17 @@ func (b *topologyBuilder) addExternalResource(
 			}
 			b.addEdge(routeID, nodeID(models.NodeKindService, namespace, backend.Name), "routes", string(resource.Kind))
 		}
-		if len(referenceErrors) > 0 {
+		if len(referenceErrors) > 0 || len(outOfScope) > 0 {
 			if resource.Properties == nil {
 				resource.Properties = map[string]string{}
 			}
+		}
+		if len(referenceErrors) > 0 {
 			resource.Properties["status"] = "Reference error"
 			resource.Properties["referenceError"] = strings.Join(referenceErrors, "; ")
+		}
+		if len(outOfScope) > 0 {
+			resource.Properties["outsideWatchScope"] = strings.Join(outOfScope, "; ") + " (outside the watched namespace " + watchNamespace + ")"
 		}
 		b.addRoute(resource)
 		for _, hostname := range resource.Hostnames {

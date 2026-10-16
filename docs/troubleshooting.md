@@ -162,12 +162,18 @@ kubectl get ingressclass
 kubectl get svc -A | grep -Ei 'ingress|controller|nginx|traefik|haproxy'
 ```
 
-If several controllers are installed, check that every Ingress has the intended `ingressClassName`. An Ingress without an explicit class is attached only when exactly one IngressClass is marked as the default; NorthScope does not guess ownership from an arbitrary NodePort Service.
+If several controllers are installed, check that every Ingress has the intended `ingressClassName`. NorthScope attaches an Ingress without an explicit class in this order:
+
+1. The IngressClass marked as the default, when exactly one is marked.
+2. The only IngressClass, when the cluster has exactly one.
+3. The controller that wrote the Ingress status: when the status address matches the load balancer address or external IP of exactly one exposed Service (or of exactly one controller-like Service), NorthScope links the Ingress to that Service's IngressClass controller, or shows an `Inferred` controller named after the Service. This covers controllers without an IngressClass object, such as Traefik on older k3s releases.
+
+NorthScope does not guess ownership from an arbitrary NodePort Service.
 
 Older controllers often rely on the deprecated `kubernetes.io/ingress.class` annotation without creating IngressClass objects. When an annotation names a class that has no IngressClass object, NorthScope shows an `Inferred` controller for that class name and matches controller Services by name and labels. Create an IngressClass object when you want ownership to be explicit.
 ## Optional Gateway API Or F5 Objects Are Missing
 
-Gateway API and F5 CIS resources are optional. NorthScope only watches those resources when their CRDs are installed, discoverable, and enabled in Helm values.
+Gateway API and F5 CIS resources are optional. NorthScope only watches those resources when their CRDs are installed, discoverable, and enabled in Helm values. It checks for served CRDs every 2 minutes, so a CRD installed, removed, or upgraded to a new preferred version after startup is picked up without a restart.
 
 ```bash
 kubectl get crd | grep -E 'gateway.networking.k8s.io|cis.f5.com'

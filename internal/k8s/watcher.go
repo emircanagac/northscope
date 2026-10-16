@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
@@ -29,8 +31,7 @@ import (
 
 const defaultResyncPeriod = 10 * time.Minute
 const defaultRebuildDebounce = 250 * time.Millisecond
-const optionalResourceRefreshInterval = 2 * time.Minute
-const optionalResourceRequestTimeout = 15 * time.Second
+const optionalResourceDiscoveryInterval = 2 * time.Minute
 const cacheSyncPollInterval = 100 * time.Millisecond
 const defaultCacheSyncReportInterval = 30 * time.Second
 
@@ -71,12 +72,16 @@ type Watcher struct {
 
 	optionalResourceDiscoveryWarningOnce sync.Once
 	optionalResourceMu                   sync.Mutex
-	optionalResourceLastRefresh          time.Time
-	optionalResourceGVRs                 map[schema.GroupVersionResource]struct{}
-	optionalResourceCache                []ExternalResource
-	optionalInformers                    []cache.SharedIndexInformer
+	optionalInformers                    map[schema.GroupVersionResource]optionalInformer
 
 	buildSnapshotFunc func() (models.TopologySnapshot, error)
+}
+
+// optionalInformer is a running Gateway API or F5 informer.
+type optionalInformer struct {
+	item     optionalResource
+	informer cache.SharedIndexInformer
+	stop     func()
 }
 
 type WatcherOptions struct {
@@ -509,11 +514,12 @@ func (w *Watcher) buildSnapshot(ctx context.Context) (models.TopologySnapshot, e
 	if err != nil {
 		return models.TopologySnapshot{}, err
 	}
-	externalResources := w.optionalExternalResources(ctx)
+	externalResources := w.optionalExternalResources()
 	scoped := scopeTrafficInputs(ingresses, services, pods, nodes, externalResources, endpoints, endpointSlices)
 	gatewayClasses, gateways, gatewayRoutes, f5Resources := externalResourceInventory(externalResources)
 
-	snapshot := BuildTopologyWithResourcesAndEndpoints(
+	snapshot := BuildTopologyWithOptions(
+		TopologyOptions{WatchNamespace: w.namespace},
 		ingresses,
 		ingressClasses,
 		scoped.services,
@@ -553,39 +559,37 @@ func externalResourceInventory(resources []ExternalResource) (gatewayClasses, ga
 	return
 }
 
-func (w *Watcher) optionalExternalResources(ctx context.Context) []ExternalResource {
-	if w.dynamicClient == nil {
-		return nil
-	}
-
+// optionalExternalResources reads Gateway API and F5 resources from the
+// optional informer caches. Informers that have not finished their first list
+// are skipped so a partial cache never looks complete.
+func (w *Watcher) optionalExternalResources() []ExternalResource {
 	w.optionalResourceMu.Lock()
-	defer w.optionalResourceMu.Unlock()
-
-	now := time.Now()
-	if !w.optionalResourceLastRefresh.IsZero() && now.Sub(w.optionalResourceLastRefresh) < optionalResourceRefreshInterval {
-		return append([]ExternalResource(nil), w.optionalResourceCache...)
+	informers := make([]optionalInformer, 0, len(w.optionalInformers))
+	for _, informer := range w.optionalInformers {
+		informers = append(informers, informer)
 	}
+	w.optionalResourceMu.Unlock()
+	sort.Slice(informers, func(i, j int) bool {
+		return informers[i].item.gvr.String() < informers[j].item.gvr.String()
+	})
 
-	availableGVRs, err := w.availableOptionalResourceGVRs()
-	if err != nil {
-		w.optionalResourceDiscoveryWarningOnce.Do(func() {
-			log.Printf("optional Gateway/F5 discovery disabled; API resource discovery failed: %v", err)
-		})
-		availableGVRs = w.optionalResourceGVRs
-		if availableGVRs == nil {
-			availableGVRs = map[schema.GroupVersionResource]struct{}{}
+	var resources []ExternalResource
+	for _, informer := range informers {
+		if !informer.informer.HasSynced() {
+			continue
+		}
+		apiVersion := informer.item.gvr.GroupVersion().String()
+		for _, obj := range informer.informer.GetStore().List() {
+			item, ok := obj.(*unstructured.Unstructured)
+			if !ok {
+				continue
+			}
+			if resource, ok := externalResourceFromUnstructured(item, informer.item.kind, apiVersion); ok {
+				resources = append(resources, resource)
+			}
 		}
 	}
-
-	requestCtx, cancel := context.WithTimeout(ctx, optionalResourceRequestTimeout)
-	defer cancel()
-	resources, complete := listOptionalExternalResources(requestCtx, w.dynamicClient, availableGVRs, w.namespace)
-	w.optionalResourceGVRs = availableGVRs
-	if complete || w.optionalResourceCache == nil {
-		w.optionalResourceCache = append([]ExternalResource(nil), resources...)
-	}
-	w.optionalResourceLastRefresh = now
-	return append([]ExternalResource(nil), w.optionalResourceCache...)
+	return resources
 }
 
 func (w *Watcher) availableOptionalResourceGVRs() (map[schema.GroupVersionResource]struct{}, error) {
@@ -623,48 +627,107 @@ func (w *Watcher) availableOptionalResourceGVRs() (map[schema.GroupVersionResour
 	return available, nil
 }
 
+// startOptionalInformers watches the Gateway API and F5 resources that are
+// served now, then rediscovers them periodically so CRDs installed, removed, or
+// upgraded to a new preferred version after startup are picked up.
 func (w *Watcher) startOptionalInformers(ctx context.Context) {
 	if w.dynamicClient == nil {
 		return
 	}
+	w.syncOptionalInformers(ctx)
+	go func() {
+		ticker := time.NewTicker(optionalResourceDiscoveryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				w.syncOptionalInformers(ctx)
+			}
+		}
+	}()
+}
 
+// syncOptionalInformers starts informers for newly served optional resources
+// and stops the ones that are no longer served or no longer preferred. A failed
+// discovery keeps the current informers.
+func (w *Watcher) syncOptionalInformers(ctx context.Context) {
 	available, err := w.availableOptionalResourceGVRs()
 	if err != nil {
 		w.optionalResourceDiscoveryWarningOnce.Do(func() {
-			log.Printf("optional Gateway/F5 watches disabled; API resource discovery failed: %v", err)
+			log.Printf("optional Gateway/F5 discovery failed; keeping current watches and retrying every %s: %v", optionalResourceDiscoveryInterval, err)
 		})
 		return
 	}
-
-	handler := cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(interface{}) { w.optionalResourceChanged() },
-		UpdateFunc: func(interface{}, interface{}) { w.optionalResourceChanged() },
-		DeleteFunc: func(interface{}) { w.optionalResourceChanged() },
-	}
+	wanted := map[schema.GroupVersionResource]optionalResource{}
 	for _, item := range w.preferredEnabledOptionalResources(available) {
-		namespace := w.namespace
-		if namespace == "" {
-			namespace = metav1.NamespaceAll
-		}
-		if item.scope == "cluster" {
-			namespace = metav1.NamespaceAll
-		}
-		informer := w.newOptionalInformer(item, namespace)
-		if err := informer.SetTransform(stripManagedFields); err != nil {
-			log.Printf("register optional topology watch %s transform failed: %v", item.gvr.String(), err)
-			continue
-		}
-		if _, err := informer.AddEventHandler(handler); err != nil {
-			log.Printf("register optional topology watch %s failed: %v", item.gvr.String(), err)
-			continue
-		}
-		if err := w.health.track(item.gvr.GroupResource().String(), informer, true); err != nil {
-			log.Printf("register optional topology watch %s health failed: %v", item.gvr.String(), err)
-			continue
-		}
-		w.optionalInformers = append(w.optionalInformers, informer)
-		go informer.Run(ctx.Done())
+		wanted[item.gvr] = item
 	}
+
+	w.optionalResourceMu.Lock()
+	defer w.optionalResourceMu.Unlock()
+	if w.optionalInformers == nil {
+		w.optionalInformers = map[schema.GroupVersionResource]optionalInformer{}
+	}
+	changed := false
+	for gvr, running := range w.optionalInformers {
+		if _, ok := wanted[gvr]; ok {
+			continue
+		}
+		running.stop()
+		delete(w.optionalInformers, gvr)
+		w.health.untrack(gvr.GroupResource().String())
+		log.Printf("stopped optional topology watch %s; it is no longer served", gvr.String())
+		changed = true
+	}
+	for gvr, item := range wanted {
+		if _, ok := w.optionalInformers[gvr]; ok {
+			continue
+		}
+		if running, err := w.runOptionalInformer(ctx, item); err != nil {
+			log.Printf("register optional topology watch %s failed: %v", gvr.String(), err)
+		} else {
+			w.optionalInformers[gvr] = running
+		}
+	}
+	if changed {
+		w.rebuildAndPublishWhenReady()
+	}
+}
+
+func (w *Watcher) runOptionalInformer(ctx context.Context, item optionalResource) (optionalInformer, error) {
+	namespace := w.namespace
+	if item.scope == "cluster" || namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	informer := w.newOptionalInformer(item, namespace)
+	if err := informer.SetTransform(stripManagedFields); err != nil {
+		return optionalInformer{}, err
+	}
+	handler := cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(interface{}) { w.rebuildAndPublishWhenReady() },
+		UpdateFunc: func(interface{}, interface{}) { w.rebuildAndPublishWhenReady() },
+		DeleteFunc: func(interface{}) { w.rebuildAndPublishWhenReady() },
+	}
+	if _, err := informer.AddEventHandler(handler); err != nil {
+		return optionalInformer{}, err
+	}
+	if err := w.health.track(item.gvr.GroupResource().String(), informer, true); err != nil {
+		return optionalInformer{}, err
+	}
+	stopCh := make(chan struct{})
+	var once sync.Once
+	stop := func() { once.Do(func() { close(stopCh) }) }
+	go func() {
+		select {
+		case <-ctx.Done():
+			stop()
+		case <-stopCh:
+		}
+	}()
+	go informer.Run(stopCh)
+	return optionalInformer{item: item, informer: informer, stop: stop}, nil
 }
 
 func (w *Watcher) preferredEnabledOptionalResources(available map[schema.GroupVersionResource]struct{}) []optionalResource {
@@ -684,13 +747,6 @@ func (w *Watcher) preferredEnabledOptionalResources(available map[schema.GroupVe
 		filtered = append(filtered, item)
 	}
 	return filtered
-}
-
-func (w *Watcher) optionalResourceChanged() {
-	w.optionalResourceMu.Lock()
-	w.optionalResourceLastRefresh = time.Time{}
-	w.optionalResourceMu.Unlock()
-	w.rebuildAndPublishWhenReady()
 }
 
 // stripManagedFields drops server-side apply bookkeeping before objects enter
