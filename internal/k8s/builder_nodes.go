@@ -75,7 +75,7 @@ func sortedSetValues(values map[string]struct{}) []string {
 	return result
 }
 
-func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route ingressRoute, diagnosis routeDiagnosis) {
+func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route ingressRoute, diagnosis routeDiagnosis, extra map[string]string) {
 	properties := map[string]string{
 		"mode":       "configured",
 		"ingress":    displayName(ingress.Namespace, ingress.Name),
@@ -105,6 +105,9 @@ func (b *topologyBuilder) addIngressRoute(ingress *networkingv1.Ingress, route i
 	}
 	if route.IsDefault {
 		properties["defaultBackend"] = "true"
+	}
+	for key, value := range extra {
+		properties[key] = value
 	}
 
 	b.addNode(models.Node{
