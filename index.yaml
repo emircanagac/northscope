@@ -5,6 +5,63 @@ entries:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
         - kind: added
+          description: Routes warn when several Ingresses define the same host and path for one controller
+        - kind: added
+          description: ingress-nginx canary Ingresses are linked to the routes they split, with their traffic rule
+        - kind: added
+          description: The selected route shows its diagnosis, next step, and kubectl command
+        - kind: added
+          description: Shareable links keep the namespace, route search, selected route, and layout mode
+      artifacthub.io/images: |
+        - name: northscope
+          image: ghcr.io/emircanagac/northscope:1.2.0
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/emircanagac/northscope#readme
+        - name: Production access
+          url: https://github.com/emircanagac/northscope/blob/main/docs/production-access.md
+        - name: Troubleshooting
+          url: https://github.com/emircanagac/northscope/blob/main/docs/troubleshooting.md
+        - name: Security policy
+          url: https://github.com/emircanagac/northscope/blob/main/SECURITY.md
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/screenshots: |
+        - title: Traffic path for a host, light theme
+          url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-light.png
+        - title: Traffic path for a host, dark theme
+          url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
+    apiVersion: v2
+    appVersion: 1.2.0
+    created: "2026-10-17T09:16:03.6221986Z"
+    description: Read-only Kubernetes traffic map that shows how every host enters
+      your cluster, from load balancer and ingress controller to Pods.
+    digest: 0210ed6c06d601d37cb3146a0b93dc582cb925c36be8e266cb5ed8dfb4fe3dc4
+    home: https://github.com/emircanagac/northscope
+    icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
+    keywords:
+    - kubernetes
+    - ingress
+    - gateway-api
+    - topology
+    - traffic
+    - debugging
+    - observability
+    kubeVersion: '>=1.20.0-0'
+    maintainers:
+    - name: Emircan Agac
+      url: https://github.com/emircanagac
+    name: northscope
+    sources:
+    - https://github.com/emircanagac/northscope
+    type: application
+    urls:
+    - https://emircanagac.github.io/northscope/northscope-1.2.0.tgz
+    version: 1.2.0
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
+        - kind: added
           description: Chart README, logo, and Artifact Hub metadata
         - kind: added
           description: values.schema.json validates chart values and documents them in Artifact Hub
@@ -98,4 +155,4 @@ entries:
     urls:
     - https://emircanagac.github.io/northscope/northscope-1.0.0.tgz
     version: 1.0.0
-generated: "2026-10-16T22:42:38.787931646Z"
+generated: "2026-10-17T09:16:03.621397817Z"
