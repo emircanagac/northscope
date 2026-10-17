@@ -3,8 +3,8 @@ name: northscope
 description: Read-only Kubernetes traffic map that shows how every host enters your cluster, from load balancer and ingress controller to Pods.
 type: application
 kubeVersion: ">=1.20.0-0"
-version: 1.1.1
-appVersion: "1.1.1"
+version: 1.2.0
+appVersion: "1.2.0"
 icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
 keywords:
   - kubernetes
@@ -26,7 +26,7 @@ annotations:
   artifacthub.io/prerelease: "false"
   artifacthub.io/images: |
     - name: northscope
-      image: ghcr.io/emircanagac/northscope:1.1.1
+      image: ghcr.io/emircanagac/northscope:1.2.0
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/emircanagac/northscope#readme
@@ -43,6 +43,10 @@ annotations:
       url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
   artifacthub.io/changes: |
     - kind: added
-      description: Chart README, logo, and Artifact Hub metadata
+      description: Routes warn when several Ingresses define the same host and path for one controller
     - kind: added
-      description: values.schema.json validates chart values and documents them in Artifact Hub
+      description: ingress-nginx canary Ingresses are linked to their primary route with their traffic rule
+    - kind: added
+      description: The selected route shows its diagnosis, next step, and kubectl command
+    - kind: added
+      description: Shareable links keep the namespace, route search, selected route, and layout mode
