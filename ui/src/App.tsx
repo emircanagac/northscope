@@ -44,7 +44,10 @@ import {
   namespaceInputValue,
   resolveNamespaceEnterSelection,
   routeMatchesSearch,
+  viewStateFromSearch,
+  viewStateSearch,
   type NamespaceOption,
+  type ViewState,
 } from './uiState';
 import { degradedResources, healthFromStatus, streamStatusLabel } from './watchHealth';
 
@@ -75,16 +78,51 @@ function initialThemeMode(): ThemeMode {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+function initialViewState(): ViewState {
+  if (typeof window === 'undefined') {
+    return { namespace: '', search: '', route: '', mode: 'simple' };
+  }
+  return viewStateFromSearch(window.location.search);
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to a temporary text area below.
+  }
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.opacity = '0';
+  document.body.appendChild(textArea);
+  textArea.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
 export default function App() {
   const { nodes, edges, snapshot, status, error } = useTopologyStream();
   const appVersion = useAppVersion();
   const session = useSession();
-  const [namespace, setNamespace] = useState('');
-  const [namespaceQuery, setNamespaceQuery] = useState('');
+  const [initialView] = useState(initialViewState);
+  const [namespace, setNamespace] = useState(initialView.namespace);
+  const [namespaceQuery, setNamespaceQuery] = useState(initialView.namespace);
   const [namespacePickerOpen, setNamespacePickerOpen] = useState(false);
-  const [routeSearch, setRouteSearch] = useState('');
-  const [selectedHostGroupId, setSelectedHostGroupId] = useState('');
-  const [topologyMode, setTopologyMode] = useState<TopologyMode>('simple');
+  const [routeSearch, setRouteSearch] = useState(initialView.search);
+  const [selectedHostGroupId, setSelectedHostGroupId] = useState(initialView.route);
+  const [topologyMode, setTopologyMode] = useState<TopologyMode>(initialView.mode);
+  const [linkCopied, setLinkCopied] = useState<'copied' | 'failed' | ''>('');
+  const scrolledToInitialRoute = useRef(!initialView.route);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => initialThemeMode());
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<TopologyNode, TopologyEdge> | null>(null);
   const lastFitViewSignature = useRef('');
@@ -304,10 +342,48 @@ export default function App() {
   }, [fitViewSignature, flowInstance, flowNodes.length, selectedHostGroup, topologyMode]);
 
   useEffect(() => {
+    // Wait for the first snapshot so a route from a shared link is not dropped
+    // before the routes it refers to have arrived.
+    if (!hasSnapshot) {
+      return;
+    }
     if (selectedHostGroupId && !routeHostGroups.some((group) => group.id === selectedHostGroupId)) {
       setSelectedHostGroupId('');
     }
-  }, [routeHostGroups, selectedHostGroupId]);
+  }, [hasSnapshot, routeHostGroups, selectedHostGroupId]);
+
+  useEffect(() => {
+    const search = viewStateSearch(
+      { namespace, search: routeSearch, route: selectedHostGroupId, mode: topologyMode },
+      window.location.search,
+    );
+    if (search !== window.location.search) {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`);
+    }
+  }, [namespace, routeSearch, selectedHostGroupId, topologyMode]);
+
+  useEffect(() => {
+    if (scrolledToInitialRoute.current || !selectedHostGroup) {
+      return;
+    }
+    scrolledToInitialRoute.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector(`[data-host-lane="${CSS.escape(selectedHostGroup.id)}"]`)?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedHostGroup]);
+
+  useEffect(() => {
+    if (!linkCopied) {
+      return;
+    }
+    const timer = window.setTimeout(() => setLinkCopied(''), 1600);
+    return () => window.clearTimeout(timer);
+  }, [linkCopied]);
+
+  const copyRouteLink = () => {
+    void copyText(window.location.href).then((copied) => setLinkCopied(copied ? 'copied' : 'failed'));
+  };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
@@ -359,6 +435,17 @@ export default function App() {
               Expanded
             </button>
           </div>
+          {selectedHostGroup ? (
+            <button
+              type="button"
+              data-testid="copy-route-link"
+              onClick={copyRouteLink}
+              title="Copy a link that opens this route"
+              className="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-black text-slate-600 shadow-sm transition hover:border-slate-400 hover:text-slate-950 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+            >
+              {linkCopied === 'copied' ? 'Link copied' : linkCopied === 'failed' ? 'Copy failed' : 'Copy link'}
+            </button>
+          ) : null}
           {snapshot ? <SnapshotAge generatedAt={snapshot.generatedAt} version={snapshot.version} /> : null}
           <div
             data-testid="stream-status"
@@ -560,11 +647,12 @@ export default function App() {
                           const hostSelected = hostLaneId === selectedHostGroup?.id;
                           const host = hostRoutes[0]?.host ?? 'unknown host';
                           return (
+                            <div key={hostLaneId} className="space-y-1">
                             <button
-                              key={hostLaneId}
                               type="button"
                               data-testid="host-route"
                               data-host={host}
+                              data-host-lane={hostLaneId}
                               onClick={() => setSelectedHostGroupId(hostLaneId)}
                               className={`w-full cursor-pointer space-y-1 rounded-md border-2 p-1.5 text-left shadow-sm transition ${
                                 hostSelected
@@ -598,9 +686,16 @@ export default function App() {
                                     <span className="shrink-0 text-[10px] font-bold uppercase opacity-70">{route.status}</span>
                                   </div>
                                   <div className="mt-0.5 break-words text-[11px] font-semibold leading-snug opacity-75">{route.backend}</div>
+                                  {route.notes.map((note) => (
+                                    <div key={note} className="mt-0.5 break-words text-[10px] font-bold leading-snug text-amber-700 dark:text-amber-300">
+                                      {note}
+                                    </div>
+                                  ))}
                                 </div>
                               ))}
                             </button>
+                            {hostSelected ? <RouteDetails routes={hostRoutes} /> : null}
+                            </div>
                           );
                         })}
                       </div>
@@ -650,6 +745,36 @@ export default function App() {
           ) : null}
         </section>
       </main>
+    </div>
+  );
+}
+
+function RouteDetails({ routes }: { routes: RouteItem[] }) {
+  const details = routes.filter((route) => route.diagnosis || route.nextStep || route.kubectl);
+  if (details.length === 0) {
+    return null;
+  }
+  return (
+    <div
+      data-testid="route-details"
+      className="space-y-2 rounded-md border border-slate-200 bg-white p-2 text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+    >
+      {details.map((route) => (
+        <div key={route.id} className="space-y-1">
+          <div className="text-[11px] font-black">
+            {route.path} <span className="font-bold uppercase opacity-70">{route.status}</span>
+          </div>
+          {route.diagnosis ? <div className="break-words text-[11px] font-semibold leading-snug">{route.diagnosis}</div> : null}
+          {route.nextStep && route.severity !== 'ok' ? (
+            <div className="break-words text-[11px] leading-snug text-slate-600 dark:text-slate-400">{route.nextStep}</div>
+          ) : null}
+          {route.kubectl && route.severity !== 'ok' ? (
+            <code className="block select-all break-all rounded bg-slate-100 px-1.5 py-1 font-mono text-[10px] leading-snug text-slate-700 dark:bg-slate-950 dark:text-slate-300">
+              {route.kubectl}
+            </code>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

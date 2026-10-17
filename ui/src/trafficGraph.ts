@@ -17,6 +17,10 @@ export interface RouteItem {
   backend: string;
   status: string;
   severity: string;
+  diagnosis: string;
+  nextStep: string;
+  kubectl: string;
+  notes: string[];
 }
 
 export interface RouteGroup {
@@ -104,6 +108,26 @@ export function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): To
       },
     };
   });
+}
+
+// routeNotes lists the other Ingresses that share a route's host and path, so
+// overlaps stay visible even when another finding is the route's diagnosis.
+export function routeNotes(properties: Record<string, string> = {}): string[] {
+  const notes: string[] = [];
+  if (properties.conflictsWith) {
+    notes.push(`Also defined by ${properties.conflictsWith}`);
+  }
+  if (properties.canaries) {
+    notes.push(`Canary: ${properties.canaries}`);
+  }
+  if (properties.canary === 'true') {
+    const primary = properties.canaryOf ? `canary of ${properties.canaryOf}` : 'canary without a primary Ingress';
+    notes.push(properties.canaryRule ? `${primary} (${properties.canaryRule})` : primary);
+  }
+  if (properties.outsideWatchScope) {
+    notes.push(`Outside watch scope: ${properties.outsideWatchScope}`);
+  }
+  return notes.map((note) => note.charAt(0).toUpperCase() + note.slice(1));
 }
 
 export function severityRank(severity: string): number {

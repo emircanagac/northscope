@@ -3,6 +3,7 @@ import { isControllerNode, isIngressNode, nodeDisplayName } from './topologyView
 import {
   ingressHostLaneId,
   layoutTrafficPath,
+  routeNotes,
   safeVisualId,
   severityRank,
   type RouteItem,
@@ -73,6 +74,8 @@ function edgeLabel(kind: string): string {
       return 'matches';
     case 'routes':
       return 'routes';
+    case 'canary':
+      return 'canary';
     case 'selects':
       return 'selects';
     case 'endpointslice':
@@ -212,6 +215,10 @@ function routeItemFromNode(route: TopologyNode, ingress: TopologyNode, hostLaneI
     backend: props.backend ?? (service ? nodeDisplayName(service) : 'missing service'),
     status: String(route.data.status ?? 'Unknown'),
     severity: props.severity ?? 'unknown',
+    diagnosis: props.diagnosis ?? '',
+    nextStep: props.nextStep ?? '',
+    kubectl: props.kubectl ?? '',
+    notes: routeNotes(props),
   };
 }
 
@@ -479,6 +486,18 @@ export function buildNamespaceTrafficGraph(
     addEdge(laneEdge(laneService, lanePodSummary, 'selects'));
   };
 
+  // A canary Ingress shares the primary route's traffic, so its Service is
+  // drawn as a second backend in the primary route's lane.
+  const addCanaryBranches = (source: TopologyNode, route: TopologyNode) => {
+    for (const canaryEdge of outgoingEdges(route.id, ['canary'])) {
+      const canaryService = nodeById.get(canaryEdge.target);
+      if (!canaryService || kindOf(canaryService) !== 'service') {
+        continue;
+      }
+      addServiceBranch(source, canaryService, route.id, { ...route, id: `${route.id}:canary:${canaryService.id}` }, 'canary');
+    }
+  };
+
   for (const ingress of ingressNodes) {
     const ingressNamespace = String(ingress.data.namespace ?? '');
     const controllerEdges = incomingEdges(ingress.id, ['controls']);
@@ -548,6 +567,7 @@ export function buildNamespaceTrafficGraph(
           addNode(laneService);
           addEdge(laneEdge(laneHost, laneRoute, 'defines'));
           addEdge(laneEdge(laneRoute, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
+          addCanaryBranches(laneRoute, record.route);
 
           const podEdges = outgoingEdges(record.displayService.id, ['selects', 'endpointslice', 'endpoint', 'externalname']);
           for (const podEdge of podEdges) {
@@ -585,6 +605,7 @@ export function buildNamespaceTrafficGraph(
           const laneService = laneNode(record.displayService, record.route.id);
           addNode(laneService);
           addEdge(laneEdge(laneIngress, laneService, record.serviceEdge && record.service ? 'routes' : 'missing'));
+          addCanaryBranches(laneIngress, record.route);
 
           if (record.service) {
             const externalEndpoints = externalEndpointsForService(record.displayService);
@@ -741,6 +762,10 @@ export function buildNamespaceTrafficGraph(
           backend: nodeDisplayName(service),
           status: String(f5.data.status ?? 'Configured'),
           severity: routeSeverity(f5),
+          diagnosis: '',
+          nextStep: '',
+          kubectl: '',
+          notes: [],
         });
         const summarySource = { ...f5, id: itemId };
         addServiceBranch(laneF5, service, hostLaneId, summarySource, 'balances');
@@ -785,5 +810,9 @@ function routeItemFromExternal(
     backend,
     status: String(route.data.status ?? 'Unknown'),
     severity: routeSeverity(route),
+    diagnosis: route.data.properties?.referenceError ?? '',
+    nextStep: '',
+    kubectl: '',
+    notes: routeNotes(route.data.properties),
   };
 }

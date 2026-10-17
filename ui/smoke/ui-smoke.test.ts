@@ -4,12 +4,15 @@ import {
   filterNodesByRoute,
   groupRoutesByHost,
   layoutTrafficPath,
+  routeNotes,
   type RouteItem,
 } from '../src/trafficGraph.ts';
 import {
   namespaceInputValue,
   resolveNamespaceEnterSelection,
   routeMatchesSearch,
+  viewStateFromSearch,
+  viewStateSearch,
 } from '../src/uiState.ts';
 import {
   acceptSnapshot,
@@ -43,6 +46,10 @@ function route(overrides: Partial<RouteItem>): RouteItem {
     backend: 'frontend:http',
     status: 'Backends ready',
     severity: 'ok',
+    diagnosis: '',
+    nextStep: '',
+    kubectl: '',
+    notes: [],
     ...overrides,
   };
   return {
@@ -95,6 +102,38 @@ test('route search matches namespace, ingress, host, path, backend, and status',
   assert.equal(routeMatchesSearch(item, 'api:http'), true);
   assert.equal(routeMatchesSearch(item, 'warning'), true);
   assert.equal(routeMatchesSearch(item, 'missing-service'), false);
+});
+
+test('route search also matches conflict and canary notes', () => {
+  const item = route({ notes: routeNotes({ canaries: 'shop/shop-canary -> api-canary:80 (weight 20%)' }) });
+
+  assert.equal(routeMatchesSearch(item, 'canary'), true);
+  assert.equal(routeMatchesSearch(item, 'conflict'), false);
+});
+
+test('route notes describe overlapping Ingresses and canaries', () => {
+  assert.deepEqual(routeNotes({}), []);
+  assert.deepEqual(routeNotes({ conflictsWith: 'shop/shop-v2' }), ['Also defined by shop/shop-v2']);
+  assert.deepEqual(routeNotes({ canary: 'true', canaryOf: 'shop/shop', canaryRule: 'weight 20%' }), ['Canary of shop/shop (weight 20%)']);
+  assert.deepEqual(routeNotes({ canary: 'true', canaryRule: 'header X-Canary: always' }), [
+    'Canary without a primary Ingress (header X-Canary: always)',
+  ]);
+});
+
+test('shared links restore namespace, search, route, and view mode', () => {
+  assert.deepEqual(viewStateFromSearch(''), { namespace: '', search: '', route: '', mode: 'simple' });
+  const state = {
+    namespace: 'store',
+    search: 'shop',
+    route: 'ingress-host:store:shop:shop-demo-localhost',
+    mode: 'expanded' as const,
+  };
+  const search = viewStateSearch(state, '');
+
+  assert.deepEqual(viewStateFromSearch(search), state);
+  assert.equal(viewStateSearch({ namespace: '', search: ' ', route: '', mode: 'simple' }, ''), '');
+  assert.equal(viewStateSearch({ namespace: '', search: '', route: '', mode: 'simple' }, '?namespace=old&debug=1'), '?debug=1');
+  assert.equal(viewStateFromSearch('?view=unknown').mode, 'simple');
 });
 
 test('host route selection keeps all paths for the selected host together', () => {
