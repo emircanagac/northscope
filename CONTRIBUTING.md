@@ -24,11 +24,15 @@ Build and test:
 
 ```bash
 make ui-build
+npm --prefix ui run lint
 npm --prefix ui run test:ui-smoke
 npm --prefix ui run test:e2e
 go test ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
 make build
 ```
+
+CI runs the same checks. Go code is linted with [golangci-lint](https://golangci-lint.run/) (`.golangci.yml`) and the UI with [oxlint](https://oxc.rs/docs/guide/usage/linter.html) (`ui/.oxlintrc.json`), including the React hooks rules.
 
 Install the Playwright Chromium runtime once before running browser tests locally:
 

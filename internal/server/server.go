@@ -304,7 +304,7 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 		log.Printf("websocket upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	conn.SetReadLimit(1024)
 	_ = conn.SetReadDeadline(time.Now().Add(websocketPongWait))

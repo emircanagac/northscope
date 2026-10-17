@@ -201,6 +201,16 @@ func BuildTopologyWithOptions(
 	}
 
 	endpointPodsByServiceKey := endpointPodsByService(endpointSlices, endpoints, endpointSliceServiceKeys, podsByName, podsByIP)
+	controllerIDByIngress := make(map[string]string, len(ingresses))
+	for _, ingress := range ingresses {
+		key := namespacedKey(ingress.Namespace, ingress.Name)
+		if className := ingressControllerClassName(ingress, ingressClassesByName); className != "" {
+			controllerIDByIngress[key] = controllerNodeID(className)
+		} else if id := statusControllerByIngress[key]; id != "" {
+			controllerIDByIngress[key] = id
+		}
+	}
+	routeOverlaps := collectRouteOverlaps(ingresses, controllerIDByIngress)
 	for _, ingress := range ingresses {
 		builder.addIngress(ingress)
 		for _, host := range ingressHosts(ingress) {
@@ -237,7 +247,19 @@ func BuildTopologyWithOptions(
 			}
 			diagnosis := diagnoseIngressRoute(ingress, route, controllerName, svc, pods, endpointStatsByService[serviceKey], nonEndpointPods)
 			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
-			builder.addIngressRoute(ingress, route, diagnosis)
+			overlap := routeOverlaps[routeID]
+			diagnosis = applyRouteOverlap(diagnosis, ingress, route, overlap)
+			builder.addIngressRoute(ingress, route, diagnosis, overlapProperties(overlap, ingress, route))
+			// A canary receives part of this route's traffic, so its Service is
+			// drawn as a second backend of the route.
+			for _, link := range overlap.Canaries {
+				canary := link.Canary
+				canaryService := servicesByKey[namespacedKey(canary.ingress.Namespace, canary.route.ServiceName)]
+				if canaryService == nil {
+					continue
+				}
+				builder.addEdge(routeID, nodeID(models.NodeKindService, canaryService.Namespace, canaryService.Name), "canary", "canary "+canary.rule)
+			}
 			builder.addEdge(
 				nodeID(models.NodeKindIngress, ingress.Namespace, ingress.Name),
 				routeID,

@@ -93,7 +93,7 @@ func scopedTopologyNeighbors(node models.Node, outgoing, incoming []models.Edge)
 		addOutgoing("attaches")
 		addIncoming("controls", "fronts", "resolves")
 	case models.NodeKindRoute:
-		addOutgoing("routes")
+		addOutgoing("routes", "canary")
 		addIncoming("attaches", "defines", "resolves")
 	case models.NodeKindService:
 		addOutgoing("selects", "endpointslice", "endpoint", "externalname")

@@ -190,7 +190,7 @@ func TestWebSocketRequiresSessionBeforeUpgrade(t *testing.T) {
 	for _, path := range []string{"/ws", "/ws/topology"} {
 		conn, response, err := websocket.DefaultDialer.Dial(wsBase+path, nil)
 		if conn != nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 		if !errors.Is(err, websocket.ErrBadHandshake) || response == nil || response.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("%s: expected 401 handshake rejection, got err %v, response %+v", path, err, response)
@@ -206,7 +206,7 @@ func TestWebSocketRequiresSessionBeforeUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected websocket with a session to connect: %v", err)
 	}
-	conn.Close()
+	_ = conn.Close()
 }
 
 func TestWebSocketClosesWhenSessionExpires(t *testing.T) {
@@ -227,7 +227,7 @@ func TestWebSocketClosesWhenSessionExpires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect websocket: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {

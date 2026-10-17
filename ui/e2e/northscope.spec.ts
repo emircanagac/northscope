@@ -727,3 +727,63 @@ test('sign out is hidden when authentication is disabled', async ({ page }) => {
   await expect(page.getByTestId('app-version')).toHaveText('v9.8.7');
   await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
 });
+
+test('selected routes are kept in the URL so a shared link reopens them', async ({ page }) => {
+  await openSelectedTopology(page);
+  await page.getByRole('button', { name: 'Expanded' }).click();
+
+  await expect(page).toHaveURL(/[?&]route=ingress-host/);
+  await expect(page).toHaveURL(/[?&]view=expanded/);
+  await expect(page.getByTestId('copy-route-link')).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config');
+  await expect(page.getByTestId('host-route').filter({ hasText: 'shop.example.com' })).toContainText('Selected');
+  await expect(page.getByRole('button', { name: 'Expanded' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
+});
+
+test('route details explain conflicts and draw canary backends', async ({ page }) => {
+  const conflictSnapshot = {
+    ...snapshot,
+    nodes: [
+      ...snapshot.nodes.map((item) =>
+        item.id === 'route:demo:store:root'
+          ? {
+              ...item,
+              data: {
+                ...item.data,
+                status: 'Conflict',
+                properties: {
+                  ...item.data.properties,
+                  severity: 'warning',
+                  diagnosis: 'shop.example.com/ is also defined by demo/store-v2 for the same controller.',
+                  nextStep: 'Keep one Ingress per host and path.',
+                  kubectl: 'kubectl get ingress -A -o wide | grep shop.example.com',
+                  conflictsWith: 'demo/store-v2',
+                  canaries: 'demo/store-canary -> frontend-canary:80 (weight 20%)',
+                },
+              },
+            }
+          : item,
+      ),
+      {
+        id: 'service:demo:frontend-canary',
+        type: 'northscopeNode',
+        position: { x: 0, y: 0 },
+        data: { label: 'demo/frontend-canary', kind: 'Service', namespace: 'demo', name: 'frontend-canary', status: 'Active' },
+      },
+    ],
+    edges: [
+      ...snapshot.edges,
+      { id: 'route-canary', source: 'route:demo:store:root', target: 'service:demo:frontend-canary', data: { kind: 'canary' } },
+    ],
+  };
+  await openSelectedTopology(page, conflictSnapshot);
+
+  const details = page.getByTestId('route-details');
+  await expect(details).toContainText('also defined by demo/store-v2');
+  await expect(details).toContainText('kubectl get ingress -A -o wide');
+  await expect(page.getByTestId('host-route')).toContainText('Also defined by demo/store-v2');
+  await expect(page.getByTestId('topology-node-card').filter({ hasText: 'frontend-canary' })).toBeVisible();
+});

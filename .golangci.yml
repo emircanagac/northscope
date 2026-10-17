@@ -1,0 +1,24 @@
+version: "2"
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # Package comments and receiver naming are style choices this
+        # project does not enforce.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+  exclusions:
+    rules:
+      # core/v1 Endpoints is deprecated in Kubernetes 1.33, but NorthScope
+      # reads it on purpose for clusters that do not serve EndpointSlices.
+      - linters: [staticcheck]
+        text: 'SA1019: .*v1\.(Endpoints|EndpointSubset|EndpointAddress|EndpointPort)\b.* is deprecated'
+
+formatters:
+  enable:
+    - gofmt

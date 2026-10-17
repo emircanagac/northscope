@@ -35,7 +35,7 @@ func serve(t *testing.T, server *Server, target string) (*http.Response, string)
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
 	response := recorder.Result()
-	t.Cleanup(func() { response.Body.Close() })
+	t.Cleanup(func() { _ = response.Body.Close() })
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("read %s response body: %v", target, err)
@@ -128,7 +128,7 @@ func TestMetricsEndpointExposesPrometheusText(t *testing.T) {
 	server.httpServer.Handler.ServeHTTP(recorder, request)
 
 	response := recorder.Result()
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("read response body: %v", err)
@@ -168,7 +168,7 @@ func TestVersionEndpointExposesRuntimeBuildVersion(t *testing.T) {
 	server.httpServer.Handler.ServeHTTP(recorder, request)
 
 	response := recorder.Result()
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("read response body: %v", err)

@@ -76,7 +76,7 @@ func runWatcher(t *testing.T, watcher *Watcher) <-chan error {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-errCh:
+		case <-errCh: //nolint:errcheck // Run's error after cancellation is not what this cleanup checks.
 		case <-time.After(2 * time.Second):
 			t.Error("watcher did not stop after context cancellation")
 		}
@@ -301,7 +301,7 @@ func TestInformerHealthTransitions(t *testing.T) {
 		io.ErrUnexpectedEOF,
 		context.Canceled,
 		apierrors.NewResourceExpired("too old resource version"),
-		apierrors.NewGone("gone"),
+		apierrors.NewGone("gone"), //nolint:staticcheck // API servers still return 410 Gone for expired watches.
 	} {
 		health.recordError("pods", err)
 	}

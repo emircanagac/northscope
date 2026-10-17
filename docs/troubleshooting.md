@@ -153,6 +153,22 @@ kubectl get endpoints -n <namespace> <service> -o yaml
 
 For selector-less Services, NorthScope reads manually managed EndpointSlices and legacy Endpoints. If both exist, EndpointSlices are preferred.
 
+## Routes Show Conflict Or Canary Notes
+
+A route shows `Conflict` when several Ingresses define the same host, path, and path type for the same controller. Only one of their backends receives that traffic: ingress-nginx keeps the oldest Ingress and ignores the later definitions, and other controllers may choose differently. List the Ingresses for the host:
+
+```bash
+kubectl get ingress -A -o wide | grep <host>
+```
+
+Keep one Ingress per host and path, or mark the extra one as an ingress-nginx canary when you want to split traffic. Ingresses handled by different controllers, or with a different path or path type, do not conflict.
+
+For an ingress-nginx canary (`nginx.ingress.kubernetes.io/canary: "true"`), NorthScope draws the canary Service as a second backend and shows its rule: the `canary-by-header`, `canary-by-cookie`, and `canary-weight` annotations, in the order ingress-nginx applies them. ingress-nginx attaches a canary to the backend Service of the primary Ingress, not to the host, so every route of that controller to the same Service and port receives the split; NorthScope shows the canary on those routes too. It warns when:
+
+- A canary has no primary Ingress for the same host and path. ingress-nginx does not serve it.
+- Several canary Ingresses send traffic to the same canary Service. ingress-nginx keeps one traffic rule per canary Service, so their header, cookie, and weight rules override each other.
+- A second canary targets the same host and path. ingress-nginx supports one canary per location.
+
 ## Controller Or NodePort Looks Wrong
 
 NorthScope infers the external entry path from controller-like NodePort or LoadBalancer Services and IngressClass ownership. Validate the controller Service and class:
