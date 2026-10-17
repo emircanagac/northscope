@@ -6,11 +6,12 @@ import { formatSnapshotAge } from '../watchHealth';
 export function SnapshotAge({ generatedAt, version }: { generatedAt: string; version: number }) {
   const [now, setNow] = useState(() => Date.now());
 
+  // A new snapshot is at most one tick behind; formatSnapshotAge already
+  // reports small negative ages as "just now".
   useEffect(() => {
-    setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [generatedAt]);
+  }, []);
 
   const age = formatSnapshotAge(generatedAt, now);
   if (!age) {

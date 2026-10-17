@@ -41,6 +41,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+
       - name: Race detector
         run: go test -race ./internal/k8s ./internal/server
 
@@ -176,6 +179,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run UI unit tests
+        run: npm run test:ui-smoke
 
       - name: Run browser tests
         run: npm run test:e2e

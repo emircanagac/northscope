@@ -111,7 +111,7 @@ func get(handler http.Handler, path string, cookie *http.Cookie) *http.Response 
 
 func readBody(t *testing.T, response *http.Response) string {
 	t.Helper()
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)

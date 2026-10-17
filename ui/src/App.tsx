@@ -198,7 +198,7 @@ export default function App() {
   }, [filteredRoutes.length, graphReady, selectedHostGroup, selectedLaneIds, selectedRouteIds, topologyMode, visibleGraphNodes]);
   const displayGraphEdges = useMemo(() => {
     return filterEdgesForNodes(visibleGraphEdges, displayGraphNodes);
-  }, [displayGraphNodes, topologyMode, visibleGraphEdges]);
+  }, [displayGraphNodes, visibleGraphEdges]);
   const focusedGraphNodes = useMemo(
     () => focusNodesByRoute(displayGraphNodes, selectedRouteIds, selectedLaneIds),
     [displayGraphNodes, selectedLaneIds, selectedRouteIds],
@@ -341,17 +341,9 @@ export default function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [fitViewSignature, flowInstance, flowNodes.length, selectedHostGroup, topologyMode]);
 
-  useEffect(() => {
-    // Wait for the first snapshot so a route from a shared link is not dropped
-    // before the routes it refers to have arrived.
-    if (!hasSnapshot) {
-      return;
-    }
-    if (selectedHostGroupId && !routeHostGroups.some((group) => group.id === selectedHostGroupId)) {
-      setSelectedHostGroupId('');
-    }
-  }, [hasSnapshot, routeHostGroups, selectedHostGroupId]);
-
+  // selectedHostGroupId is kept even while its route is filtered out or not
+  // yet received, so a shared link or a cleared search brings it back;
+  // selectedHostGroup is undefined until the route is listed.
   useEffect(() => {
     const search = viewStateSearch(
       { namespace, search: routeSearch, route: selectedHostGroupId, mode: topologyMode },
