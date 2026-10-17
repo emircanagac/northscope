@@ -32,6 +32,7 @@ type routeOverlapKey struct {
 type overlapRoute struct {
 	ingress *networkingv1.Ingress
 	route   ingressRoute
+	key     routeOverlapKey
 	canary  bool
 	rule    string
 }
@@ -40,14 +41,40 @@ func (r overlapRoute) ingressName() string {
 	return displayName(r.ingress.Namespace, r.ingress.Name)
 }
 
-// routeOverlap describes the other Ingresses that define the same host and
-// path for the same controller as one route.
+func (r overlapRoute) same(other overlapRoute) bool {
+	return r.ingress == other.ingress && r.route.ID == other.route.ID
+}
+
+// backendKey identifies the upstream ingress-nginx builds for a route: one
+// per controller, namespace, Service, and Service port.
+func (r overlapRoute) backendKey() string {
+	if r.route.ServiceName == "" {
+		return ""
+	}
+	return strings.Join([]string{r.key.controllerID, r.ingress.Namespace, r.route.ServiceName, r.route.ServicePortLabel()}, "|")
+}
+
+// canaryLink is a canary Ingress that ingress-nginx attaches to the backend
+// of Primary, the Ingress it serves for the canary's host and path.
+type canaryLink struct {
+	Canary  overlapRoute
+	Primary overlapRoute
+}
+
+// routeOverlap describes how other Ingresses for the same controller affect
+// one route.
 type routeOverlap struct {
 	// Primaries are the other non-canary Ingresses for this host and path.
 	Primaries []overlapRoute
-	// Canaries are the canary Ingresses for this host and path, excluding the
-	// route itself.
-	Canaries []overlapRoute
+	// LocationCanaries are the other canary Ingresses for this host and path.
+	LocationCanaries []overlapRoute
+	// Canaries split the traffic of this route's Service. ingress-nginx
+	// attaches a canary to the primary's backend Service, so every route to
+	// that Service and port receives the split, whatever its host.
+	Canaries []canaryLink
+	// SharedCanaryService lists other canary Ingresses that send traffic to
+	// the same canary Service, whose rules ingress-nginx merges into one.
+	SharedCanaryService []overlapRoute
 	// Oldest is the non-canary Ingress ingress-nginx serves when several
 	// define the same location.
 	Oldest  *overlapRoute
@@ -57,10 +84,11 @@ type routeOverlap struct {
 }
 
 // collectRouteOverlaps groups Ingress routes by controller, host, path, and
-// path type, and returns the overlap for every route node that shares its
-// location with another Ingress.
+// path type, links ingress-nginx canaries to the backends they split, and
+// returns the overlap for every route node that is affected.
 func collectRouteOverlaps(ingresses []*networkingv1.Ingress, controllerIDs map[string]string) map[string]routeOverlap {
 	groups := map[routeOverlapKey][]overlapRoute{}
+	var keys []routeOverlapKey
 	for _, ingress := range ingresses {
 		controllerID := controllerIDs[namespacedKey(ingress.Namespace, ingress.Name)]
 		if controllerID == "" {
@@ -84,39 +112,67 @@ func collectRouteOverlaps(ingresses []*networkingv1.Ingress, controllerIDs map[s
 				continue
 			}
 			seen[key] = struct{}{}
-			groups[key] = append(groups[key], overlapRoute{ingress: ingress, route: route, canary: canary, rule: rule})
+			if _, ok := groups[key]; !ok {
+				keys = append(keys, key)
+			}
+			groups[key] = append(groups[key], overlapRoute{ingress: ingress, route: route, key: key, canary: canary, rule: rule})
 		}
 	}
 
-	overlaps := map[string]routeOverlap{}
-	for _, members := range groups {
-		if len(members) < 2 {
-			if len(members) == 1 && members[0].canary {
-				member := members[0]
-				overlaps[ingressRouteNodeID(member.ingress.Namespace, member.ingress.Name, member.route.ID)] = routeOverlap{Canary: true, Rule: member.rule, HasSelf: true}
-			}
-			continue
-		}
-		var primaries []overlapRoute
-		for _, member := range members {
-			if !member.canary {
+	oldestByKey := map[routeOverlapKey]*overlapRoute{}
+	canariesByBackend := map[string][]canaryLink{}
+	canariesByService := map[string][]overlapRoute{}
+	for _, key := range keys {
+		var primaries, canaries []overlapRoute
+		for _, member := range groups[key] {
+			if member.canary {
+				canaries = append(canaries, member)
+			} else {
 				primaries = append(primaries, member)
 			}
 		}
 		oldest := oldestOverlapRoute(primaries)
-		for i, member := range members {
-			overlap := routeOverlap{Canary: member.canary, Rule: member.rule, HasSelf: true, Oldest: oldest}
-			for j, other := range members {
-				if i == j {
+		oldestByKey[key] = oldest
+		for _, canary := range canaries {
+			if serviceKey := canary.backendKey(); serviceKey != "" {
+				canariesByService[serviceKey] = append(canariesByService[serviceKey], canary)
+			}
+			if oldest != nil {
+				if backend := oldest.backendKey(); backend != "" {
+					canariesByBackend[backend] = append(canariesByBackend[backend], canaryLink{Canary: canary, Primary: *oldest})
+				}
+			}
+		}
+	}
+
+	overlaps := map[string]routeOverlap{}
+	for _, key := range keys {
+		members := groups[key]
+		for _, member := range members {
+			overlap := routeOverlap{Canary: member.canary, Rule: member.rule, Oldest: oldestByKey[key]}
+			for _, other := range members {
+				if other.same(member) {
 					continue
 				}
 				if other.canary {
-					overlap.Canaries = append(overlap.Canaries, other)
+					overlap.LocationCanaries = append(overlap.LocationCanaries, other)
 				} else {
 					overlap.Primaries = append(overlap.Primaries, other)
 				}
 			}
-			overlaps[ingressRouteNodeID(member.ingress.Namespace, member.ingress.Name, member.route.ID)] = overlap
+			if member.canary {
+				for _, other := range canariesByService[member.backendKey()] {
+					if other.ingress != member.ingress {
+						overlap.SharedCanaryService = append(overlap.SharedCanaryService, other)
+					}
+				}
+			} else if backend := member.backendKey(); backend != "" {
+				overlap.Canaries = canariesByBackend[backend]
+			}
+			overlap.HasSelf = member.canary || len(overlap.Primaries) > 0 || len(overlap.LocationCanaries) > 0 || len(overlap.Canaries) > 0
+			if overlap.HasSelf {
+				overlaps[ingressRouteNodeID(member.ingress.Namespace, member.ingress.Name, member.route.ID)] = overlap
+			}
 		}
 	}
 	return overlaps
@@ -242,11 +298,20 @@ func applyRouteOverlap(diagnosis routeDiagnosis, ingress *networkingv1.Ingress, 
 				Kubectl:    kubectl,
 				Confidence: "Inferred",
 			}
-		case len(overlap.Canaries) > 0 && healthy:
+		case len(overlap.SharedCanaryService) > 0 && healthy:
 			return routeDiagnosis{
 				Status:     "Conflict",
 				Severity:   "warning",
-				Message:    fmt.Sprintf("Several canary Ingresses define %s (also %s); ingress-nginx uses only one canary per host and path.", location, overlapIngressNames(overlap.Canaries)),
+				Message:    fmt.Sprintf("Canary Service %q is also used by %s; ingress-nginx keeps one traffic rule per canary Service, so their header, cookie, and weight rules override each other.", route.ServiceName, overlapIngressNames(overlap.SharedCanaryService)),
+				NextStep:   "Give each canary Ingress its own Service.",
+				Kubectl:    fmt.Sprintf("kubectl get ingress -n %s -o wide", ingress.Namespace),
+				Confidence: "Inferred",
+			}
+		case len(overlap.LocationCanaries) > 0 && healthy:
+			return routeDiagnosis{
+				Status:     "Conflict",
+				Severity:   "warning",
+				Message:    fmt.Sprintf("Several canary Ingresses define %s (also %s); ingress-nginx uses only one canary per host and path.", location, overlapIngressNames(overlap.LocationCanaries)),
 				NextStep:   "Keep a single canary Ingress for this host and path.",
 				Kubectl:    kubectl,
 				Confidence: "Inferred",
@@ -278,7 +343,7 @@ func applyRouteOverlap(diagnosis routeDiagnosis, ingress *networkingv1.Ingress, 
 
 // overlapProperties exposes the overlap on the route node so the UI can show
 // it even when another finding takes precedence in the diagnosis.
-func overlapProperties(overlap routeOverlap) map[string]string {
+func overlapProperties(overlap routeOverlap, ingress *networkingv1.Ingress, route ingressRoute) map[string]string {
 	if !overlap.HasSelf {
 		return nil
 	}
@@ -289,6 +354,9 @@ func overlapProperties(overlap routeOverlap) map[string]string {
 		if len(overlap.Primaries) > 0 {
 			properties["canaryOf"] = overlapIngressNames(overlap.Primaries)
 		}
+		if len(overlap.SharedCanaryService) > 0 {
+			properties["canaryServiceSharedWith"] = overlapIngressNames(overlap.SharedCanaryService)
+		}
 		return properties
 	}
 	if len(overlap.Primaries) > 0 {
@@ -296,8 +364,14 @@ func overlapProperties(overlap routeOverlap) map[string]string {
 	}
 	if len(overlap.Canaries) > 0 {
 		parts := make([]string, 0, len(overlap.Canaries))
-		for _, canary := range overlap.Canaries {
-			parts = append(parts, fmt.Sprintf("%s -> %s (%s)", canary.ingressName(), canary.route.BackendLabel(), canary.rule))
+		for _, link := range overlap.Canaries {
+			part := fmt.Sprintf("%s -> %s (%s)", link.Canary.ingressName(), link.Canary.route.BackendLabel(), link.Canary.rule)
+			// A canary for another host still splits this route because
+			// ingress-nginx attaches it to the shared Service.
+			if link.Primary.ingress != ingress || link.Primary.route.ID != route.ID {
+				part += fmt.Sprintf(", applied through Service %s shared with %s", route.ServiceName, routeLocationLabel(link.Primary.route))
+			}
+			parts = append(parts, part)
 		}
 		sort.Strings(parts)
 		properties["canaries"] = strings.Join(parts, "; ")

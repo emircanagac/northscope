@@ -45,7 +45,7 @@ annotations:
     - kind: added
       description: Routes warn when several Ingresses define the same host and path for one controller
     - kind: added
-      description: ingress-nginx canary Ingresses are linked to their primary route with their traffic rule
+      description: ingress-nginx canary Ingresses are linked to the routes they split, with their traffic rule
     - kind: added
       description: The selected route shows its diagnosis, next step, and kubectl command
     - kind: added

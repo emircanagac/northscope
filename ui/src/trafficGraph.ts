@@ -124,6 +124,9 @@ export function routeNotes(properties: Record<string, string> = {}): string[] {
     const primary = properties.canaryOf ? `canary of ${properties.canaryOf}` : 'canary without a primary Ingress';
     notes.push(properties.canaryRule ? `${primary} (${properties.canaryRule})` : primary);
   }
+  if (properties.canaryServiceSharedWith) {
+    notes.push(`Canary Service also used by ${properties.canaryServiceSharedWith}`);
+  }
   if (properties.outsideWatchScope) {
     notes.push(`Outside watch scope: ${properties.outsideWatchScope}`);
   }

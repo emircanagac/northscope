@@ -118,6 +118,10 @@ test('route notes describe overlapping Ingresses and canaries', () => {
   assert.deepEqual(routeNotes({ canary: 'true', canaryRule: 'header X-Canary: always' }), [
     'Canary without a primary Ingress (header X-Canary: always)',
   ]);
+  assert.deepEqual(routeNotes({ canary: 'true', canaryOf: 'shop/shop', canaryRule: 'weight 30%', canaryServiceSharedWith: 'shop/other' }), [
+    'Canary of shop/shop (weight 30%)',
+    'Canary Service also used by shop/other',
+  ]);
 });
 
 test('shared links restore namespace, search, route, and view mode', () => {

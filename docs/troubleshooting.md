@@ -163,7 +163,11 @@ kubectl get ingress -A -o wide | grep <host>
 
 Keep one Ingress per host and path, or mark the extra one as an ingress-nginx canary when you want to split traffic. Ingresses handled by different controllers, or with a different path or path type, do not conflict.
 
-For an ingress-nginx canary (`nginx.ingress.kubernetes.io/canary: "true"`), NorthScope draws the canary Service as a second backend of the primary route and shows its rule: the `canary-by-header`, `canary-by-cookie`, and `canary-weight` annotations, in the order ingress-nginx applies them. It warns when a canary has no primary Ingress for the same host and path, or when a second canary targets the same location, because ingress-nginx supports one canary per host and path.
+For an ingress-nginx canary (`nginx.ingress.kubernetes.io/canary: "true"`), NorthScope draws the canary Service as a second backend and shows its rule: the `canary-by-header`, `canary-by-cookie`, and `canary-weight` annotations, in the order ingress-nginx applies them. ingress-nginx attaches a canary to the backend Service of the primary Ingress, not to the host, so every route of that controller to the same Service and port receives the split; NorthScope shows the canary on those routes too. It warns when:
+
+- A canary has no primary Ingress for the same host and path. ingress-nginx does not serve it.
+- Several canary Ingresses send traffic to the same canary Service. ingress-nginx keeps one traffic rule per canary Service, so their header, cookie, and weight rules override each other.
+- A second canary targets the same host and path. ingress-nginx supports one canary per location.
 
 ## Controller Or NodePort Looks Wrong
 

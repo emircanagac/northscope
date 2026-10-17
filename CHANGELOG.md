@@ -11,7 +11,7 @@ No unreleased changes.
 ## 1.2.0 - 2026-10-17
 
 - Routes now warn when several Ingresses define the same host, path, and path type for one controller, because only one of their backends receives that traffic. The warning names the other Ingresses and the one ingress-nginx serves (the oldest).
-- ingress-nginx canary Ingresses (`nginx.ingress.kubernetes.io/canary`) are linked to their primary route: the canary Service is drawn as a second backend with its header, cookie, or weight rule. A canary without a primary Ingress, or a second canary for the same host and path, is flagged.
+- ingress-nginx canary Ingresses (`nginx.ingress.kubernetes.io/canary`) are linked to the routes they split: the canary Service is drawn as a second backend with its header, cookie, or weight rule, on the primary route and on every other route of the controller to the same Service, because ingress-nginx attaches canaries to the backend Service. A canary without a primary Ingress, canaries that share a canary Service (their rules override each other), and a second canary for the same host and path are flagged. Validated against ingress-nginx 1.15.1 on k3s 1.34.
 - Selecting a host now shows each route's diagnosis, suggested next step, and `kubectl` command in the sidebar, together with notes about overlapping Ingresses and canaries.
 - The namespace, route search, selected route, and layout mode are kept in the URL, so a link opens the same route for a teammate (after sign-in), and a Copy link button copies it.
 - CI now lints Go code with golangci-lint and the UI with oxlint, including the React hooks rules, and runs the UI unit tests.

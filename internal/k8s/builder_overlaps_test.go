@@ -167,18 +167,79 @@ func TestBuildTopologyWarnsAboutCanaryWithoutPrimary(t *testing.T) {
 
 func TestBuildTopologyWarnsAboutSeveralCanariesForOneLocation(t *testing.T) {
 	primary := shopIngress("shop", "nginx", "api", 0, nil)
-	first := shopIngress("shop-canary-a", "nginx", "api", 1, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryWeightAnnotation: "10"})
-	second := shopIngress("shop-canary-b", "nginx", "api", 2, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryWeightAnnotation: "10"})
-	snapshot := buildOverlapTopology([]*networkingv1.Ingress{primary, first, second}, "api")
+	first := shopIngress("shop-canary-a", "nginx", "canary-a", 1, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryWeightAnnotation: "10"})
+	second := shopIngress("shop-canary-b", "nginx", "canary-b", 2, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryWeightAnnotation: "10"})
+	snapshot := buildOverlapTopology([]*networkingv1.Ingress{primary, first, second}, "api", "canary-a", "canary-b")
 
 	for _, ingress := range []*networkingv1.Ingress{first, second} {
-		if route := ingressRouteNode(t, snapshot, ingress); route.Data.Status != "Conflict" {
+		route := ingressRouteNode(t, snapshot, ingress)
+		if route.Data.Status != "Conflict" || !strings.Contains(route.Data.Properties["diagnosis"], "only one canary per host and path") {
 			t.Fatalf("expected several canaries to conflict, got %q: %s", route.Data.Status, route.Data.Properties["diagnosis"])
 		}
 	}
 	if route := ingressRouteNode(t, snapshot, primary); route.Data.Status != "Backends ready" {
 		t.Fatalf("expected the primary to stay healthy, got %q: %s", route.Data.Status, route.Data.Properties["diagnosis"])
 	}
+}
+
+// ingress-nginx keeps one traffic rule per canary Service. On a k3s cluster
+// with ingress-nginx 1.15.1, a header canary for api.test and a weight-only
+// canary for another host that both used Service shop-canary ended up with
+// the weight rule only, so the header no longer selected the canary.
+func TestBuildTopologyWarnsWhenCanariesShareAService(t *testing.T) {
+	primary := shopIngress("shop", "nginx", "api", 0, nil)
+	header := shopIngress("shop-canary", "nginx", "api-canary", 1, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryByHeaderAnnotation: "X-Canary"})
+	other := shopIngress("other-canary", "nginx", "api-canary", 2, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryWeightAnnotation: "50"})
+	other.Spec.Rules[0].Host = "other.example.com"
+	snapshot := buildOverlapTopology([]*networkingv1.Ingress{primary, header, other}, "api", "api-canary")
+
+	route := ingressRouteNode(t, snapshot, header)
+	if route.Data.Status != "Conflict" || !strings.Contains(route.Data.Properties["diagnosis"], `Canary Service "api-canary" is also used by default/other-canary`) {
+		t.Fatalf("expected a shared canary Service conflict, got %q: %s", route.Data.Status, route.Data.Properties["diagnosis"])
+	}
+	if route.Data.Properties["canaryServiceSharedWith"] != "default/other-canary" {
+		t.Fatalf("expected the other canary to be listed, got %#v", route.Data.Properties)
+	}
+	// The canary without a primary reports that first.
+	if route := ingressRouteNode(t, snapshot, other); route.Data.Status != "Warning" || route.Data.Properties["canaryServiceSharedWith"] != "default/shop-canary" {
+		t.Fatalf("expected the lone canary warning with the shared Service noted, got %q: %#v", route.Data.Status, route.Data.Properties)
+	}
+}
+
+// ingress-nginx attaches a canary to the primary route's backend Service, so
+// every route to that Service receives the split. On the k3s validation
+// cluster, shop.test answered from the canary of api.test because both
+// Ingresses used Service shop-v1.
+func TestBuildTopologyAppliesCanaryToRoutesSharingThePrimaryService(t *testing.T) {
+	primary := shopIngress("api", "nginx", "api", 0, nil)
+	primary.Spec.Rules[0].Host = "api.example.com"
+	canary := shopIngress("api-canary", "nginx", "api-canary", 1, map[string]string{nginxCanaryAnnotation: "true", nginxCanaryWeightAnnotation: "30"})
+	canary.Spec.Rules[0].Host = "api.example.com"
+	shared := shopIngress("shop", "nginx", "api", 2, nil)
+	traefik := shopIngress("shop-traefik", "traefik", "api", 3, nil)
+	traefik.Spec.Rules[0].Host = "traefik.example.com"
+	snapshot := buildOverlapTopology([]*networkingv1.Ingress{primary, canary, shared, traefik}, "api", "api-canary")
+
+	canaryServiceID := nodeID(models.NodeKindService, "default", "api-canary")
+	direct := ingressRouteNode(t, snapshot, primary)
+	if got := direct.Data.Properties["canaries"]; got != "default/api-canary -> api-canary:80 (weight 30%)" {
+		t.Fatalf("expected the direct canary on the primary, got %q", got)
+	}
+	sharedRoute := ingressRouteNode(t, snapshot, shared)
+	if got := sharedRoute.Data.Properties["canaries"]; got != "default/api-canary -> api-canary:80 (weight 30%), applied through Service api shared with api.example.com/" {
+		t.Fatalf("expected the canary on a route sharing the primary Service, got %q", got)
+	}
+	if sharedRoute.Data.Status != "Backends ready" {
+		t.Fatalf("expected the shared route to stay healthy, got %q", sharedRoute.Data.Status)
+	}
+	assertEdge(t, snapshot, direct.ID, canaryServiceID, "canary")
+	assertEdge(t, snapshot, sharedRoute.ID, canaryServiceID, "canary")
+
+	traefikRoute := ingressRouteNode(t, snapshot, traefik)
+	if traefikRoute.Data.Properties["canaries"] != "" {
+		t.Fatalf("expected another controller's route not to get the nginx canary, got %q", traefikRoute.Data.Properties["canaries"])
+	}
+	assertNoEdge(t, snapshot, traefikRoute.ID, canaryServiceID, "canary")
 }
 
 func TestNginxCanaryRule(t *testing.T) {

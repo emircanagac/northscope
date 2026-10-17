@@ -249,13 +249,11 @@ func BuildTopologyWithOptions(
 			routeID := ingressRouteNodeID(ingress.Namespace, ingress.Name, route.ID)
 			overlap := routeOverlaps[routeID]
 			diagnosis = applyRouteOverlap(diagnosis, ingress, route, overlap)
-			builder.addIngressRoute(ingress, route, diagnosis, overlapProperties(overlap))
-			// A canary receives part of the primary route's traffic, so its
-			// Service is drawn as a second backend of the primary route.
-			for _, canary := range overlap.Canaries {
-				if overlap.Canary || canary.route.ServiceName == "" {
-					continue
-				}
+			builder.addIngressRoute(ingress, route, diagnosis, overlapProperties(overlap, ingress, route))
+			// A canary receives part of this route's traffic, so its Service is
+			// drawn as a second backend of the route.
+			for _, link := range overlap.Canaries {
+				canary := link.Canary
 				canaryService := servicesByKey[namespacedKey(canary.ingress.Namespace, canary.route.ServiceName)]
 				if canaryService == nil {
 					continue
