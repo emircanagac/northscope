@@ -4,6 +4,65 @@ entries:
   - annotations:
       artifacthub.io/category: networking
       artifacthub.io/changes: |
+        - kind: security
+          description: Built with Go 1.27.4, which fixes an HTTP server crash in request body limits used by the sign-in form
+        - kind: security
+          description: Signing out revokes the session, so a copied cookie and its open WebSocket streams stop working
+        - kind: changed
+          description: Topology snapshots are encoded once for all browsers and sent compressed with permessage-deflate
+        - kind: added
+          description: logFormat json writes NorthScope and Kubernetes client logs as one JSON object per line
+        - kind: changed
+          description: The topology API response is no longer cacheable, and idle HTTP connections are closed after two minutes
+      artifacthub.io/images: |
+        - name: northscope
+          image: ghcr.io/emircanagac/northscope:1.3.0
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/emircanagac/northscope#readme
+        - name: Production access
+          url: https://github.com/emircanagac/northscope/blob/main/docs/production-access.md
+        - name: Troubleshooting
+          url: https://github.com/emircanagac/northscope/blob/main/docs/troubleshooting.md
+        - name: Security policy
+          url: https://github.com/emircanagac/northscope/blob/main/SECURITY.md
+      artifacthub.io/prerelease: "false"
+      artifacthub.io/screenshots: |
+        - title: Traffic path for a host, light theme
+          url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-light.png
+        - title: Traffic path for a host, dark theme
+          url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
+    apiVersion: v2
+    appVersion: 1.3.0
+    created: "2026-11-19T21:28:04.850762288Z"
+    description: Read-only Kubernetes traffic map that shows how every host enters
+      your cluster, from load balancer and ingress controller to Pods.
+    digest: b9bf1b75a7f72eaed4d18130f88517df4b1e50101047411b2156021b4c36675a
+    home: https://github.com/emircanagac/northscope
+    icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
+    keywords:
+    - kubernetes
+    - ingress
+    - gateway-api
+    - topology
+    - traffic
+    - debugging
+    - observability
+    kubeVersion: '>=1.20.0-0'
+    maintainers:
+    - name: Emircan Agac
+      url: https://github.com/emircanagac
+    name: northscope
+    sources:
+    - https://github.com/emircanagac/northscope
+    type: application
+    urls:
+    - https://emircanagac.github.io/northscope/northscope-1.3.0.tgz
+    version: 1.3.0
+  - annotations:
+      artifacthub.io/category: networking
+      artifacthub.io/changes: |
         - kind: added
           description: Routes warn when several Ingresses define the same host and path for one controller
         - kind: added
@@ -155,4 +214,4 @@ entries:
     urls:
     - https://emircanagac.github.io/northscope/northscope-1.0.0.tgz
     version: 1.0.0
-generated: "2026-10-17T09:16:03.621397817Z"
+generated: "2026-11-19T21:28:04.850103614Z"
