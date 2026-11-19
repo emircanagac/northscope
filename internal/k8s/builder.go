@@ -7,7 +7,6 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/emircanagac/northscope/internal/models"
 )
@@ -277,19 +276,13 @@ func BuildTopologyWithOptions(
 	}
 
 	for _, svc := range services {
-		if len(svc.Spec.Selector) == 0 {
-			continue
-		}
-		selector := labels.SelectorFromSet(svc.Spec.Selector)
-		for _, pod := range podsByNamespace[svc.Namespace] {
-			if selector.Matches(labels.Set(pod.Labels)) {
-				builder.addEdge(
-					nodeID(models.NodeKindService, svc.Namespace, svc.Name),
-					nodeID(models.NodeKindPod, pod.Namespace, pod.Name),
-					"selects",
-					"Selector",
-				)
-			}
+		for _, pod := range servicePodsCache[namespacedKey(svc.Namespace, svc.Name)] {
+			builder.addEdge(
+				nodeID(models.NodeKindService, svc.Namespace, svc.Name),
+				nodeID(models.NodeKindPod, pod.Namespace, pod.Name),
+				"selects",
+				"Selector",
+			)
 		}
 	}
 

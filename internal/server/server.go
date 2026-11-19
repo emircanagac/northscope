@@ -26,6 +26,11 @@ type Server struct {
 	version    string
 	upgrader   websocket.Upgrader
 	auth       *auth.Authenticator
+	frames     snapshotFrames
+
+	// sessionCheckPeriod is how often an open WebSocket checks whether its
+	// session was signed out.
+	sessionCheckPeriod time.Duration
 }
 
 // Option configures optional Server behavior.
@@ -42,6 +47,8 @@ const (
 	websocketWriteWait  = 10 * time.Second
 	websocketPongWait   = 60 * time.Second
 	websocketPingPeriod = websocketPongWait * 9 / 10
+
+	defaultSessionCheckPeriod = 5 * time.Second
 )
 
 func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string, opts ...Option) *Server {
@@ -56,7 +63,11 @@ func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string, opts
 		version:  version,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: sameOrigin,
+			// Topology JSON repeats the same keys and names on every node, so
+			// permessage-deflate shrinks snapshots several times over.
+			EnableCompression: true,
 		},
+		sessionCheckPeriod: defaultSessionCheckPeriod,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -85,6 +96,9 @@ func New(addr string, watcher *k8s.Watcher, staticFS fs.FS, version string, opts
 		Addr:              addr,
 		Handler:           securityHeaders(handler),
 		ReadHeaderTimeout: 5 * time.Second,
+		// WebSocket connections are hijacked and keep their own ping/pong
+		// deadlines; this only closes idle keep-alive HTTP connections.
+		IdleTimeout: 2 * time.Minute,
 	}
 
 	return s
@@ -176,6 +190,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
+	// The topology lists internal hostnames and IPs, so browsers and shared
+	// caches must not store it.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.watcher.Latest())
 }
@@ -327,12 +344,21 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 	pingTicker := time.NewTicker(websocketPingPeriod)
 	defer pingTicker.Stop()
 
-	// An open stream must not outlive the session that authorized it.
-	var sessionExpired <-chan time.Time
-	if session, ok := auth.SessionFromContext(r.Context()); ok {
+	// An open stream must not outlive the session that authorized it, whether
+	// the session expires or is signed out.
+	var sessionExpired, sessionCheck <-chan time.Time
+	session, hasSession := auth.SessionFromContext(r.Context())
+	if hasSession {
 		expiryTimer := time.NewTimer(time.Until(session.ExpiresAt))
 		defer expiryTimer.Stop()
 		sessionExpired = expiryTimer.C
+		checkTicker := time.NewTicker(s.sessionCheckPeriod)
+		defer checkTicker.Stop()
+		sessionCheck = checkTicker.C
+	}
+	closeStream := func(reason string) {
+		closeMessage := websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason)
+		_ = conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(websocketWriteWait))
 	}
 
 	for {
@@ -342,9 +368,13 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 		case <-readDone:
 			return
 		case <-sessionExpired:
-			closeMessage := websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session expired")
-			_ = conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(websocketWriteWait))
+			closeStream("session expired")
 			return
+		case <-sessionCheck:
+			if s.auth != nil && s.auth.Revoked(session) {
+				closeStream("signed out")
+				return
+			}
 		case <-pingTicker.C:
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(websocketWriteWait)); err != nil {
 				return
@@ -353,10 +383,15 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			frame, err := s.frames.frame(snapshot)
+			if err != nil {
+				log.Printf("encode topology snapshot v%d: %v", snapshot.Version, err)
+				return
+			}
 			if err := conn.SetWriteDeadline(time.Now().Add(websocketWriteWait)); err != nil {
 				return
 			}
-			if err := conn.WriteJSON(snapshot); err != nil {
+			if err := conn.WritePreparedMessage(frame); err != nil {
 				return
 			}
 		}

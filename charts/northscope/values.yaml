@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/emircanagac/northscope
-  tag: 1.2.0
+  tag: 1.3.0
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -21,6 +21,10 @@ rbac:
 # Empty watches all namespaces. Set one namespace to reduce the watched and
 # namespaced RBAC surface while retaining cluster-scoped class/node discovery.
 watchNamespace: ""
+
+# Log format: text, or json for one JSON object per line (NorthScope and
+# Kubernetes client messages alike) for log collectors such as Loki or Elastic.
+logFormat: text
 
 discovery:
   gatewayAPI:

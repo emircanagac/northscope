@@ -160,3 +160,4 @@ The chart defaults are a starting point, not a universal production sizing targe
 - Review `SECURITY.md` before enabling access for a production cluster.
 - Prefer version-pinned installs for production change control.
 - NorthScope status labels are configuration-derived diagnostics, not active reachability checks.
+- Set `logFormat: json` when a log collector parses Pod logs. NorthScope and Kubernetes client messages are then written as one JSON object per line.

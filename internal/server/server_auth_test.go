@@ -209,6 +209,47 @@ func TestWebSocketRequiresSessionBeforeUpgrade(t *testing.T) {
 	_ = conn.Close()
 }
 
+func TestWebSocketClosesWhenSessionSignsOut(t *testing.T) {
+	server, _ := newAuthTestServer(t, WithAuth(newTestAuthenticator(t, auth.Options{})))
+	server.sessionCheckPeriod = 20 * time.Millisecond
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	cookie := signIn(t, server)
+	header := http.Header{}
+	header.Set("Cookie", cookie.String())
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(httpServer.URL, "http")+"/ws", header)
+	if err != nil {
+		t.Fatalf("connect websocket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	logout := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	logout.AddCookie(cookie)
+	if response := serveRequest(server, logout); response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign out: expected 303, got %d", response.StatusCode)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, _, err := conn.ReadMessage()
+		if err == nil {
+			continue
+		}
+		var closeErr *websocket.CloseError
+		if !errors.As(err, &closeErr) || closeErr.Code != websocket.ClosePolicyViolation || closeErr.Text != "signed out" {
+			t.Fatalf("expected signed out close, got %v", err)
+		}
+		break
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/topology", nil)
+	request.AddCookie(cookie)
+	if response := serveRequest(server, request); response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected the signed-out cookie to be rejected, got %d", response.StatusCode)
+	}
+}
+
 func TestWebSocketClosesWhenSessionExpires(t *testing.T) {
 	// Issue sessions from a clock that runs one TTL minus two seconds behind,
 	// so the session is valid now but expires two seconds from now.

@@ -24,6 +24,8 @@ var (
 type Session struct {
 	Username  string
 	ExpiresAt time.Time
+	// id is the session token's random nonce, which sign-out revokes.
+	id string
 }
 
 type sessionContextKey struct{}
@@ -68,38 +70,40 @@ func (s sessionSigner) issue(now time.Time) (string, time.Time, error) {
 	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(payload)), expiresAt, nil
 }
 
-func (s sessionSigner) verify(token string, now time.Time) (time.Time, error) {
+// verify checks the token's signature and lifetime and returns its expiry and
+// session ID (the nonce).
+func (s sessionSigner) verify(token string, now time.Time) (time.Time, string, error) {
 	separator := strings.LastIndexByte(token, '.')
 	if separator < 0 {
-		return time.Time{}, errMalformedSession
+		return time.Time{}, "", errMalformedSession
 	}
 	payload := token[:separator]
 	signature, err := base64.RawURLEncoding.DecodeString(token[separator+1:])
 	if err != nil {
-		return time.Time{}, errMalformedSession
+		return time.Time{}, "", errMalformedSession
 	}
 	if !hmac.Equal(signature, s.sign(payload)) {
-		return time.Time{}, errInvalidSignature
+		return time.Time{}, "", errInvalidSignature
 	}
 
 	parts := strings.Split(payload, ".")
-	if len(parts) != 3 || parts[0] != sessionVersion {
-		return time.Time{}, errMalformedSession
+	if len(parts) != 3 || parts[0] != sessionVersion || parts[2] == "" {
+		return time.Time{}, "", errMalformedSession
 	}
 	expiresUnix, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return time.Time{}, errMalformedSession
+		return time.Time{}, "", errMalformedSession
 	}
 	expiresAt := time.Unix(expiresUnix, 0)
 	if !now.Before(expiresAt) {
-		return time.Time{}, errExpiredSession
+		return time.Time{}, "", errExpiredSession
 	}
 	// A validly signed token never outlives the configured lifetime; reject
 	// anything that claims to, for example after the TTL was shortened.
 	if expiresAt.Sub(now) > s.ttl+time.Second {
-		return time.Time{}, errExpiredSession
+		return time.Time{}, "", errExpiredSession
 	}
-	return expiresAt, nil
+	return expiresAt, parts[2], nil
 }
 
 func (s sessionSigner) sign(payload string) []byte {

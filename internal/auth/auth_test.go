@@ -416,7 +416,7 @@ func TestSessionRejectsTamperedAndForeignTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
-	if _, err := signer.verify(token, clock.Now()); err != nil {
+	if _, _, err := signer.verify(token, clock.Now()); err != nil {
 		t.Fatalf("expected issued token to verify: %v", err)
 	}
 
@@ -449,7 +449,7 @@ func TestSessionRejectsTamperedAndForeignTokens(t *testing.T) {
 		"changed version":     {signer, "v2." + strings.Join(parts[1:], ".")},
 	}
 	for name, tt := range tests {
-		if _, err := tt.signer.verify(tt.token, clock.Now()); err == nil {
+		if _, _, err := tt.signer.verify(tt.token, clock.Now()); err == nil {
 			t.Fatalf("%s: expected token to be rejected", name)
 		}
 	}
@@ -557,6 +557,60 @@ func TestLogoutClearsSessionCookie(t *testing.T) {
 	handler.ServeHTTP(recorder, crossOrigin)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected cross-origin logout to be rejected, got %d", recorder.Code)
+	}
+}
+
+func TestLogoutRevokesSession(t *testing.T) {
+	authenticator, _ := newTestAuthenticator(t, Options{})
+	handler := testHandler(authenticator)
+	cookie := sessionCookieFrom(t, postLogin(t, handler, validLogin(), nil))
+	other := sessionCookieFrom(t, postLogin(t, handler, validLogin(), nil))
+
+	request := httptest.NewRequest(http.MethodPost, LogoutPath, nil)
+	request.AddCookie(cookie)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("expected sign-out redirect, got %d", recorder.Code)
+	}
+
+	// A copy of the cookie kept after sign-out must stop working.
+	if response := get(handler, "/api/topology", cookie); response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected the signed-out session to be rejected, got %d", response.StatusCode)
+	}
+	if response := get(handler, LoginPath, cookie); response.StatusCode != http.StatusOK {
+		t.Fatalf("expected the login page for a signed-out session, got %d", response.StatusCode)
+	}
+	// Other sessions, such as another browser, stay signed in.
+	if response := get(handler, "/api/topology", other); response.StatusCode != http.StatusOK {
+		t.Fatalf("expected another session to stay valid, got %d", response.StatusCode)
+	}
+}
+
+func TestSessionRevocationsExpireAndStayBounded(t *testing.T) {
+	clock := newFakeClock()
+	revocations := newSessionRevocations()
+	if !revocations.revoke("signed-out", clock.Now().Add(time.Hour), clock.Now()) || !revocations.revoked("signed-out") {
+		t.Fatal("expected a signed-out session to be revoked")
+	}
+	for i := 1; i < maxRevokedSessions; i++ {
+		revocations.revoke(strconv.Itoa(i), clock.Now().Add(2*time.Hour), clock.Now())
+	}
+	if revocations.revoke("one-too-many", clock.Now().Add(2*time.Hour), clock.Now()) {
+		t.Fatal("expected a full list of unexpired sessions to refuse more")
+	}
+	if !revocations.revoke("signed-out", clock.Now().Add(time.Hour), clock.Now()) {
+		t.Fatal("expected revoking a remembered session again to succeed")
+	}
+
+	// Once the first session has expired anyway, its entry is dropped and frees
+	// room for the next sign-out.
+	clock.Advance(time.Hour)
+	if !revocations.revoke("next", clock.Now().Add(time.Hour), clock.Now()) {
+		t.Fatal("expected an expired entry to make room")
+	}
+	if revocations.revoked("signed-out") {
+		t.Fatal("expected the expired entry to be dropped")
 	}
 }
 

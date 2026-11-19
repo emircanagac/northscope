@@ -43,6 +43,7 @@ spec:
             - "-addr=:8080"
             - "-gateway-api={{ .Values.discovery.gatewayAPI.enabled }}"
             - "-f5={{ .Values.discovery.f5.enabled }}"
+            - "-log-format={{ .Values.logFormat }}"
             {{- if .Values.watchNamespace }}
             - "-namespace={{ .Values.watchNamespace }}"
             {{- end }}
