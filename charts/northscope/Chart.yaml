@@ -3,8 +3,8 @@ name: northscope
 description: Read-only Kubernetes traffic map that shows how every host enters your cluster, from load balancer and ingress controller to Pods.
 type: application
 kubeVersion: ">=1.20.0-0"
-version: 1.2.0
-appVersion: "1.2.0"
+version: 1.3.0
+appVersion: "1.3.0"
 icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
 keywords:
   - kubernetes
@@ -26,7 +26,7 @@ annotations:
   artifacthub.io/prerelease: "false"
   artifacthub.io/images: |
     - name: northscope
-      image: ghcr.io/emircanagac/northscope:1.2.0
+      image: ghcr.io/emircanagac/northscope:1.3.0
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/emircanagac/northscope#readme
@@ -42,11 +42,13 @@ annotations:
     - title: Traffic path for a host, dark theme
       url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
   artifacthub.io/changes: |
+    - kind: security
+      description: Built with Go 1.27.4, which fixes an HTTP server crash in request body limits used by the sign-in form
+    - kind: security
+      description: Signing out revokes the session, so a copied cookie and its open WebSocket streams stop working
+    - kind: changed
+      description: Topology snapshots are encoded once for all browsers and sent compressed with permessage-deflate
     - kind: added
-      description: Routes warn when several Ingresses define the same host and path for one controller
-    - kind: added
-      description: ingress-nginx canary Ingresses are linked to the routes they split, with their traffic rule
-    - kind: added
-      description: The selected route shows its diagnosis, next step, and kubectl command
-    - kind: added
-      description: Shareable links keep the namespace, route search, selected route, and layout mode
+      description: logFormat json writes NorthScope and Kubernetes client logs as one JSON object per line
+    - kind: changed
+      description: The topology API response is no longer cacheable, and idle HTTP connections are closed after two minutes

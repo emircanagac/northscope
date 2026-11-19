@@ -68,6 +68,7 @@ type Authenticator struct {
 	signer         sessionSigner
 	throttle       *loginThrottle
 	proxyThrottle  *loginThrottle
+	revocations    *sessionRevocations
 	cookieSecure   CookieSecureMode
 	protectMetrics bool
 	now            func() time.Time
@@ -97,6 +98,7 @@ func New(creds Credentials, opts Options) (*Authenticator, error) {
 		signer:         newSessionSigner(creds, ttl),
 		throttle:       newLoginThrottle(loginBurst, loginRefill),
 		proxyThrottle:  newLoginThrottle(proxyLoginBurst, proxyLoginRefill),
+		revocations:    newSessionRevocations(),
 		cookieSecure:   opts.CookieSecure,
 		protectMetrics: opts.ProtectMetrics,
 		now:            now,
@@ -234,8 +236,8 @@ func (a *Authenticator) credentialsMatch(username, password string) bool {
 	return usernameOK&passwordOK == 1
 }
 
-// LogoutHandler serves POST /logout. It clears the session cookie and returns
-// to the login page.
+// LogoutHandler serves POST /logout. It revokes the session in this process,
+// clears the session cookie, and returns to the login page.
 func (a *Authenticator) LogoutHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -246,6 +248,13 @@ func (a *Authenticator) LogoutHandler() http.Handler {
 		if !sameOrigin(r) {
 			http.Error(w, "cross-origin sign-out rejected", http.StatusForbidden)
 			return
+		}
+		if session, ok := a.sessionFromRequest(r); ok {
+			if a.revocations.revoke(session.id, session.ExpiresAt, a.now()) {
+				log.Printf("auth: %s signed out", a.username)
+			} else {
+				log.Printf("auth: %s signed out, but %d signed-out sessions are already remembered; this session stays valid until it expires", a.username, maxRevokedSessions)
+			}
 		}
 		http.SetCookie(w, a.sessionCookie(r, "", time.Unix(0, 0)))
 		w.Header().Set("Cache-Control", "no-store")
@@ -258,11 +267,17 @@ func (a *Authenticator) sessionFromRequest(r *http.Request) (Session, bool) {
 	if err != nil {
 		return Session{}, false
 	}
-	expiresAt, err := a.signer.verify(cookie.Value, a.now())
-	if err != nil {
+	expiresAt, id, err := a.signer.verify(cookie.Value, a.now())
+	if err != nil || a.revocations.revoked(id) {
 		return Session{}, false
 	}
-	return Session{Username: a.username, ExpiresAt: expiresAt}, true
+	return Session{Username: a.username, ExpiresAt: expiresAt, id: id}, true
+}
+
+// Revoked reports whether a session that Middleware verified has been signed
+// out since, so long-lived streams can stop serving it.
+func (a *Authenticator) Revoked(session Session) bool {
+	return a.revocations.revoked(session.id)
 }
 
 func (a *Authenticator) sessionCookie(r *http.Request, value string, expiresAt time.Time) *http.Cookie {

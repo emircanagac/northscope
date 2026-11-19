@@ -8,6 +8,17 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 No unreleased changes.
 
+## 1.3.0 - 2026-11-20
+
+- Signing out now revokes the session instead of only clearing the cookie: a copy of the cookie is rejected, and open WebSocket streams for that session close within a few seconds. Revocations are kept in process memory until the session would have expired, so with several replicas or after a restart a copied cookie stays valid until it expires (see [SECURITY.md](SECURITY.md)).
+- Each topology snapshot is encoded once and shared by every connected browser instead of being encoded per connection, and WebSocket messages are compressed with permessage-deflate when the browser supports it, which shrinks the repetitive topology JSON several times over.
+- New `-log-format=json` flag (chart value `logFormat: json`) writes NorthScope and Kubernetes client messages as one JSON object per line for log collectors.
+- Snapshot builds reuse each Service's selector matches instead of matching every Pod twice.
+- `/api/topology` responses carry `Cache-Control: no-store` like the other API endpoints, because they list internal hostnames and IPs, and idle keep-alive HTTP connections are closed after two minutes.
+- CI runs the race detector on the sign-in package too.
+- Built with Go 1.27.4, which fixes an HTTP/1 server crash when a request body is limited with `MaxBytesReader`, as the sign-in form does (GO-2026-6859), and stops trusting compromised intermediate certificates in `crypto/x509` (GO-2026-6809). `golang.org/x/net` is updated to v0.62.0 (GO-2026-6860, GO-2026-6866; NorthScope does not call the affected code).
+- Updated the Node.js build image, `actions/setup-node`, `actions/upload-artifact`, and `docker/login-action`.
+
 ## 1.2.0 - 2026-10-17
 
 - Routes now warn when several Ingresses define the same host, path, and path type for one controller, because only one of their backends receives that traffic. The warning names the other Ingresses and the one ingress-nginx serves (the oldest).

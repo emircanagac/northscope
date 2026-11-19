@@ -5,13 +5,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"k8s.io/klog/v2"
 
 	"github.com/emircanagac/northscope/internal/auth"
 	"github.com/emircanagac/northscope/internal/buildinfo"
@@ -28,6 +33,7 @@ func main() {
 		gatewayAPI  = flag.Bool("gateway-api", true, "Discover Gateway API resources when their CRDs are installed")
 		f5          = flag.Bool("f5", true, "Discover F5 CIS custom resources when their CRDs are installed")
 		showVersion = flag.Bool("version", false, "Print the NorthScope version and exit")
+		logFormat   = flag.String("log-format", "text", "Log format: text, or json for one JSON object per line, including Kubernetes client messages")
 
 		authDir            = flag.String("auth-dir", "", "Directory with username, password, and session-key files, such as a mounted Secret. Empty disables authentication.")
 		authCookieSecure   = flag.String("auth-cookie-secure", "auto", "Session cookie Secure attribute: auto (when the request is HTTPS or X-Forwarded-Proto is https), true, or false")
@@ -39,6 +45,9 @@ func main() {
 	if *showVersion {
 		fmt.Println(buildinfo.Version)
 		return
+	}
+	if err := configureLogging(*logFormat, os.Stderr); err != nil {
+		log.Fatalf("configure logging: %v", err)
 	}
 
 	log.Printf("NorthScope %s starting", buildinfo.Version)
@@ -100,6 +109,22 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown failed: %v", err)
 	}
+}
+
+// configureLogging keeps the standard text log for "text". For "json" it sends
+// NorthScope's log package output and the Kubernetes client's klog output
+// through one slog JSON handler, so log collectors can parse every line.
+func configureLogging(format string, output io.Writer) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "text":
+		return nil
+	case "json":
+		logger := slog.New(slog.NewJSONHandler(output, nil))
+		slog.SetDefault(logger)
+		klog.SetSlogLogger(logger)
+		return nil
+	}
+	return fmt.Errorf("invalid log format %q: use text or json", format)
 }
 
 func newAuthenticator(dir, cookieSecure string, protectMetrics bool, sessionTTL time.Duration) (*auth.Authenticator, error) {

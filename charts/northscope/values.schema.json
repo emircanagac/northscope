@@ -48,6 +48,11 @@
       "description": "Watch one namespace instead of all namespaces.",
       "type": "string"
     },
+    "logFormat": {
+      "description": "Log format: text, or json for one JSON object per line.",
+      "type": "string",
+      "enum": ["text", "json"]
+    },
     "discovery": {
       "type": "object",
       "additionalProperties": false,

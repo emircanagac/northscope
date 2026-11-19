@@ -61,6 +61,7 @@ Without an ingress controller, set `ingress.enabled=false` and use `kubectl -n n
 | `watchNamespace` | `""` | Watch one namespace instead of all namespaces, with namespaced RBAC. |
 | `discovery.gatewayAPI.enabled` | `true` | Discover Gateway API resources when their CRDs are installed. |
 | `discovery.f5.enabled` | `true` | Discover F5 CIS resources when their CRDs are installed. |
+| `logFormat` | `text` | Log format: `text`, or `json` for one JSON object per line. |
 | `service.type` | `ClusterIP` | Service type. |
 | `networkPolicy.enabled` | `false` | Create a NetworkPolicy for the NorthScope Pod. |
 | `podDisruptionBudget.enabled` | `false` | Create a PodDisruptionBudget. |
