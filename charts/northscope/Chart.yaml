@@ -43,6 +43,8 @@ annotations:
       url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
   artifacthub.io/changes: |
     - kind: security
+      description: Built with Go 1.27.4, which fixes an HTTP server crash in request body limits used by the sign-in form
+    - kind: security
       description: Signing out revokes the session, so a copied cookie and its open WebSocket streams stop working
     - kind: changed
       description: Topology snapshots are encoded once for all browsers and sent compressed with permessage-deflate
