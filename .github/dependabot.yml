@@ -1,25 +1,26 @@
 version: 2
 
+# One monthly pull request for every ecosystem: Go modules, UI packages,
+# GitHub Actions, and Docker base images are updated and tested together.
 multi-ecosystem-groups:
-  application-dependencies:
+  dependencies:
     schedule:
       interval: "monthly"
-  build-dependencies:
-    schedule:
-      interval: "monthly"
+    labels:
+      - "dependencies"
 
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "application-dependencies"
+    multi-ecosystem-group: "dependencies"
 
   - package-ecosystem: "npm"
     directory: "/ui"
     patterns:
       - "*"
-    multi-ecosystem-group: "application-dependencies"
+    multi-ecosystem-group: "dependencies"
     ignore:
       # Keep the Playwright package aligned with the CI container image.
       - dependency-name: "@playwright/test"
@@ -32,10 +33,12 @@ updates:
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "build-dependencies"
+    multi-ecosystem-group: "dependencies"
 
+  # Dependabot bumps the golang build image but not the go directive in
+  # go.mod, which CI uses. CI fails until both name the same Go release.
   - package-ecosystem: "docker"
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "build-dependencies"
+    multi-ecosystem-group: "dependencies"
