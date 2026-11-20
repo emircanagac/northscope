@@ -1,0 +1,57 @@
+name: Landing page
+
+# The Helm repository landing page is published with every release. This
+# workflow also republishes it when its template changes on main, for the
+# latest released chart, so wording fixes do not wait for the next release.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/pages/**
+      - scripts/render-landing-page.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish landing page
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Shared with the release workflow's chart publish, so two pushes to
+    # gh-pages never race.
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Render for the latest release
+        run: |
+          tag="$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1)"
+          if [ -z "$tag" ]; then
+            echo "::error::No release tag found"
+            exit 1
+          fi
+          mkdir -p .landing
+          git show "${tag}:charts/northscope/Chart.yaml" > "$RUNNER_TEMP/Chart.yaml"
+          bash scripts/render-landing-page.sh "$RUNNER_TEMP/Chart.yaml" "${tag#v}" .landing/index.html
+          echo "Rendered the landing page for ${tag}"
+
+      - name: Publish landing page
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: .landing
+          keep_files: true
+          enable_jekyll: false

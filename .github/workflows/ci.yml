@@ -372,6 +372,11 @@ jobs:
   publish-chart:
     name: Publish Helm Chart
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Shared with the landing page workflow, so two pushes to gh-pages never
+    # race.
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
     needs:
       - go
       - helm
@@ -443,17 +448,7 @@ jobs:
             "${merge_args[@]}"
 
       - name: Add chart repository landing page
-        run: |
-          chart=charts/northscope/Chart.yaml
-          version="${GITHUB_REF_NAME#v}"
-          app_version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" | tr -d '"')"
-          kube_version="$(awk '/^kubeVersion:/ {print $2; exit}' "$chart" | tr -d '"' | sed -E 's/^>=([0-9]+\.[0-9]+).*/\1/')"
-          sed -e "s/@CHART_VERSION@/${version}/g" -e "s/@APP_VERSION@/${app_version}/g" -e "s/@KUBE_VERSION@/${kube_version}/g" \
-            .github/pages/index.html > .helm-repo/index.html
-          if grep --quiet '@[A-Z_]*@' .helm-repo/index.html; then
-            echo "::error::Unresolved placeholder in the landing page"
-            exit 1
-          fi
+        run: bash scripts/render-landing-page.sh charts/northscope/Chart.yaml "${GITHUB_REF_NAME#v}" .helm-repo/index.html
 
       - name: Publish chart repository
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
