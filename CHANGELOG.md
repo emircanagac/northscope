@@ -6,7 +6,9 @@ This project follows a lightweight changelog style inspired by Keep a Changelog.
 
 ## Unreleased
 
-No unreleased changes.
+- Dependabot opens one monthly pull request for Go modules, UI packages, GitHub Actions, and Docker base images instead of one per group.
+- CI fails when `go.mod` and the golang build image name different Go releases, because tests and vulnerability scans use `go.mod` while release images use the image. Dependabot only bumps the image.
+- Updated `azure/setup-helm` and `docker/login-action`.
 
 ## 1.3.0 - 2026-11-20
 

@@ -30,6 +30,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # CI tests and scans with the go.mod version, while release images are
+      # built with the golang image. Dependabot only bumps the image.
+      - name: Check Go version alignment
+        run: |
+          mod_version="$(awk '/^go / {print $2; exit}' go.mod)"
+          image_version="$(sed -n 's/^FROM .*golang:\([0-9][0-9.]*\)-alpine.*/\1/p' Dockerfile | head -n 1)"
+          if [ -z "$mod_version" ] || [ -z "$image_version" ]; then
+            echo "::error::Could not read the Go version from go.mod ($mod_version) or the Dockerfile ($image_version)"
+            exit 1
+          fi
+          if [ "$mod_version" != "$image_version" ]; then
+            echo "::error::go.mod requires Go $mod_version but the Dockerfile builds with golang:$image_version; set the go directive in go.mod to $image_version"
+            exit 1
+          fi
+
       - name: Prepare embedded UI fixture
         run: |
           mkdir -p ui/dist
