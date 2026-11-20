@@ -13,21 +13,21 @@ kubectl -n northscope port-forward svc/northscope 18080:80
 curl -i http://localhost:18080/readyz
 ```
 
-Expected startup logs include:
+Expected startup logs include the following lines, after a timestamp. With `logFormat: json` each line is a JSON object with the same message in `msg` and the fields as keys.
 
 ```text
-NorthScope starting
-NorthScope authentication enabled for user "admin" (cookie secure: auto, metrics protected: false)
-NorthScope compatibility: using EndpointSlice API discovery.k8s.io/v1
-HTTP server listening on :8080
-NorthScope Kubernetes caches synced
-NorthScope ready: snapshot v1, ... nodes, ... edges
+INFO NorthScope starting version=v1.4.0
+INFO Authentication enabled user=admin cookieSecure=auto metricsProtected=false
+INFO Using EndpointSlice API apiVersion=discovery.k8s.io/v1
+INFO HTTP server listening addr=:8080
+INFO Kubernetes caches synced
+INFO NorthScope ready version=1 nodes=... edges=... buildSeconds=...
 ```
 
 If `/readyz` returns `503`, the watcher has not generated the first topology snapshot yet. NorthScope waits until Ingresses, IngressClasses, Services, Endpoints, EndpointSlices, Pods, and Nodes have each been listed once. While it waits, it logs the resources that are still unsynced every 30 seconds, with their latest error:
 
 ```text
-NorthScope still waiting for Kubernetes caches after 30s; unsynced: pods (last error: failed to list *v1.Pod: pods is forbidden: ...)
+WARN Still waiting for Kubernetes caches waited=30s unsynced="pods (last error: failed to list *v1.Pod: pods is forbidden: ...)"
 ```
 
 The same information is available over HTTP. `/api/status` requires a session when the built-in sign-in is enabled, so sign in with curl first:
@@ -86,7 +86,7 @@ If the sign-in form returns to the login page or keeps asking again after a succ
 
 After a password change through Helm, the Deployment rolls automatically. After rotating an `auth.existingSecret` Secret, restart NorthScope with `kubectl -n northscope rollout restart deploy/northscope`.
 
-If the log shows `WARNING: authentication is disabled`, NorthScope was started without `-auth-dir` (for example with `auth.enabled=false`) and anyone who can reach it can view the topology.
+If the log shows `WARN Authentication is disabled`, NorthScope was started without `-auth-dir` (for example with `auth.enabled=false`) and anyone who can reach it can view the topology.
 
 ## The UI Shows Degraded Or An Old Snapshot
 
@@ -96,7 +96,7 @@ When a list or watch call fails, for example because RBAC was revoked, the Servi
 
 - The status pill shows `Degraded` instead of `Live config`.
 - A banner names the degraded resources and their latest error. `(not loaded)` means the resource was never listed, so its objects are missing rather than stale.
-- The log records `NorthScope watch for <resource> degraded` once, and `NorthScope watch for <resource> recovered` when a watch succeeds again.
+- The log records `Watch degraded; its topology data may be stale or incomplete resource=<resource>` once, and `Watch recovered resource=<resource>` when a watch succeeds again.
 
 A resource stays degraded until a watch for it starts or delivers an event again. A successful list alone does not clear it, so a Role that grants `list` but not `watch` stays visible.
 
