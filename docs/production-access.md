@@ -162,7 +162,7 @@ Benchmarks of one snapshot build on generated ingress-nginx clusters (one Ingres
 - Increase CPU and memory requests before raising limits on large clusters.
 - Keep event coalescing enabled; unchanged snapshots are not sent to browsers.
 - Each replica maintains its own informer cache and WebSocket clients. Additional replicas improve availability but also duplicate Kubernetes API watch and snapshot-build work.
-- NorthScope is pre-beta and does not yet publish a certified maximum cluster size. Validate representative route and endpoint counts before production rollout.
+- NorthScope does not yet publish a certified maximum cluster size; the benchmarks above use generated clusters. Validate representative route and endpoint counts before production rollout.
 
 ## Operational Notes
 

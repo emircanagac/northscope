@@ -2,7 +2,7 @@
 
 All notable changes to NorthScope will be documented in this file.
 
-This project follows a lightweight changelog style inspired by Keep a Changelog. NorthScope is an early preview: real-cluster validation for scale and platform-specific installs is still in progress.
+This project follows a lightweight changelog style inspired by Keep a Changelog, and semantic versioning: chart values, HTTP API responses, and metric names change incompatibly only in a new major version. Log messages are not part of that promise.
 
 ## 1.4.0 - 2026-11-20
 

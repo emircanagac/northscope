@@ -6,7 +6,7 @@ Read-only Kubernetes traffic map: see how every host enters your cluster, from l
 
 NorthScope follows each host through its load balancer and NodePorts, the ingress controller, Ingress or Gateway API routes, Services, and EndpointSlices to Pods and Nodes. It flags missing Services, wrong backend ports, Pods that are not endpoints, and backends without ready endpoints. It only reads Kubernetes configuration; it does not capture traffic or probe connectivity.
 
-NorthScope is an early preview. Feedback and [bug reports](https://github.com/emircanagac/northscope/issues) are welcome.
+NorthScope 1.x follows semantic versioning: chart values change incompatibly only in a new major version. It has been validated on k3s with ingress-nginx and Traefik; there is no certified maximum cluster size yet. Feedback and [bug reports](https://github.com/emircanagac/northscope/issues) are welcome.
 
 ## Requirements
 

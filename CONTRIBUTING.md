@@ -1,6 +1,6 @@
 # Contributing to NorthScope
 
-Thanks for considering a contribution. NorthScope is pre-beta, so the most valuable help right now is real-cluster validation, topology edge cases, documentation fixes, and focused bug reports.
+Thanks for considering a contribution. The most valuable help right now is validation on clusters and ingress controllers beyond k3s with ingress-nginx and Traefik, topology edge cases, documentation fixes, and focused bug reports.
 
 ## Ways to Contribute
 
