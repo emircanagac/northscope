@@ -3,8 +3,8 @@ name: northscope
 description: Read-only Kubernetes traffic map that shows how every host enters your cluster, from load balancer and ingress controller to Pods.
 type: application
 kubeVersion: ">=1.20.0-0"
-version: 1.3.0
-appVersion: "1.3.0"
+version: 1.4.0
+appVersion: "1.4.0"
 icon: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-logo.png
 keywords:
   - kubernetes
@@ -26,7 +26,7 @@ annotations:
   artifacthub.io/prerelease: "false"
   artifacthub.io/images: |
     - name: northscope
-      image: ghcr.io/emircanagac/northscope:1.3.0
+      image: ghcr.io/emircanagac/northscope:1.4.0
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/emircanagac/northscope#readme
@@ -42,13 +42,15 @@ annotations:
     - title: Traffic path for a host, dark theme
       url: https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png
   artifacthub.io/changes: |
-    - kind: security
-      description: Built with Go 1.27.4, which fixes an HTTP server crash in request body limits used by the sign-in form
-    - kind: security
-      description: Signing out revokes the session, so a copied cookie and its open WebSocket streams stop working
     - kind: changed
-      description: Topology snapshots are encoded once for all browsers and sent compressed with permessage-deflate
+      description: Redesigned UI that follows the GitHub Primer design system, with health shown by icon and color and keyboard-accessible controls
+    - kind: changed
+      description: Browsers receive live changes as deltas, so a one-Pod change in a 20,000-Pod cluster sends under 1 KB instead of the whole topology
+    - kind: changed
+      description: Cached Pods, Nodes, and endpoints are trimmed to the fields NorthScope reads, and updates that cannot change the topology no longer trigger rebuilds
+    - kind: fixed
+      description: A steady stream of cluster changes no longer delays topology updates until the next resync; rebuilds run at most 2 seconds after a change
+    - kind: changed
+      description: The UI lists routes and draws only the selected host, so large clusters stay responsive
     - kind: added
-      description: logFormat json writes NorthScope and Kubernetes client logs as one JSON object per line
-    - kind: changed
-      description: The topology API response is no longer cacheable, and idle HTTP connections are closed after two minutes
+      description: Snapshot build duration histogram, delta, payload, and per-resource watch event metrics, and structured log fields

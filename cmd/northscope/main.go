@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -47,31 +46,32 @@ func main() {
 		return
 	}
 	if err := configureLogging(*logFormat, os.Stderr); err != nil {
-		log.Fatalf("configure logging: %v", err)
+		fatal("Configure logging failed", err)
 	}
 
-	log.Printf("NorthScope %s starting", buildinfo.Version)
+	slog.Info("NorthScope starting", "version", buildinfo.Version)
 
 	var serverOptions []server.Option
 	if *authDir == "" {
-		log.Printf("WARNING: authentication is disabled because -auth-dir is not set; anyone who can reach NorthScope can view cluster topology")
+		slog.Warn("Authentication is disabled because -auth-dir is not set; anyone who can reach NorthScope can view cluster topology")
 	} else {
 		authenticator, err := newAuthenticator(*authDir, *authCookieSecure, *authProtectMetrics, *authSessionTTL)
 		if err != nil {
-			log.Fatalf("configure authentication: %v", err)
+			fatal("Configure authentication failed", err)
 		}
-		log.Printf("NorthScope authentication enabled for user %q (cookie secure: %s, metrics protected: %t)", authenticator.Username(), *authCookieSecure, *authProtectMetrics)
+		slog.Info("Authentication enabled",
+			"user", authenticator.Username(), "cookieSecure", *authCookieSecure, "metricsProtected", *authProtectMetrics)
 		serverOptions = append(serverOptions, server.WithAuth(authenticator))
 	}
 
 	staticFS, err := fs.Sub(ui.Dist, "dist")
 	if err != nil {
-		log.Fatalf("load embedded ui: %v", err)
+		fatal("Load embedded UI failed", err)
 	}
 
 	config, err := k8s.BuildConfig(*kubeconfig)
 	if err != nil {
-		log.Fatalf("load kubernetes config: %v", err)
+		fatal("Load Kubernetes config failed", err)
 	}
 
 	watcher, err := k8s.NewWatcherWithOptions(config, k8s.WatcherOptions{
@@ -80,7 +80,7 @@ func main() {
 		Namespace:  *namespace,
 	})
 	if err != nil {
-		log.Fatalf("create kubernetes watcher: %v", err)
+		fatal("Create Kubernetes watcher failed", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -88,16 +88,16 @@ func main() {
 
 	go func() {
 		if err := watcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("kubernetes watcher stopped: %v", err)
+			slog.Error("Kubernetes watcher stopped", "error", err)
 		}
 	}()
 
 	httpServer := server.New(*addr, watcher, staticFS, buildinfo.Version, serverOptions...)
 
 	go func() {
-		log.Printf("NorthScope HTTP server listening on %s", *addr)
+		slog.Info("HTTP server listening", "addr", *addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http server failed: %v", err)
+			fatal("HTTP server failed", err)
 		}
 	}()
 
@@ -107,13 +107,19 @@ func main() {
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("http shutdown failed: %v", err)
+		slog.Error("HTTP shutdown failed", "error", err)
 	}
 }
 
+func fatal(msg string, err error) {
+	slog.Error(msg, "error", err)
+	os.Exit(1)
+}
+
 // configureLogging keeps the standard text log for "text". For "json" it sends
-// NorthScope's log package output and the Kubernetes client's klog output
-// through one slog JSON handler, so log collectors can parse every line.
+// NorthScope's slog and log package output and the Kubernetes client's klog
+// output through one slog JSON handler, so log collectors can parse every line
+// and read NorthScope's fields (resource, error, version, ...) as JSON keys.
 func configureLogging(format string, output io.Writer) error {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "text":

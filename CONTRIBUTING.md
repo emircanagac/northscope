@@ -46,6 +46,19 @@ Run locally with your kubeconfig:
 make run
 ```
 
+Run against a generated in-memory cluster, without Kubernetes. A few routes are broken on purpose, and a Pod changes readiness every few seconds so live updates show. Run `make ui-build` first to serve the built UI on port 8080, or run `npm --prefix ui run dev` alongside it for a live-reloading UI on port 5173:
+
+```bash
+go run ./hack/demo
+go run ./hack/demo -namespaces 200 -services-per-namespace 10 -pods-per-service 10 -nodes 200
+```
+
+Measure snapshot builds, change detection, deltas, and cached object sizes at 100, 2,000, and 20,000 Pods:
+
+```bash
+go test ./internal/k8s -run '^$' -bench . -benchmem
+```
+
 Build the container image:
 
 ```bash

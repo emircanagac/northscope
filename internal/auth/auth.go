@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
-	"log"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -197,7 +197,7 @@ func (a *Authenticator) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 	client, proxy := loginClient(r)
 	now := a.now()
 	if ok, wait := a.allowLogin(client, proxy, now); !ok {
-		log.Printf("auth: sign-in throttled for client %s%s", client, viaProxy(proxy))
+		slog.Warn("Sign-in throttled", clientAttrs(client, proxy)...)
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 		renderLogin(w, http.StatusTooManyRequests, next, tooManyAttemptsMessage)
 		return
@@ -208,19 +208,19 @@ func (a *Authenticator) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 		if proxy != "" {
 			a.proxyThrottle.fail(proxy, now)
 		}
-		log.Printf("auth: failed sign-in from client %s%s", client, viaProxy(proxy))
+		slog.Warn("Sign-in failed", clientAttrs(client, proxy)...)
 		renderLogin(w, http.StatusUnauthorized, next, invalidCredentialsMessage)
 		return
 	}
 
 	token, expiresAt, err := a.signer.issue(now)
 	if err != nil {
-		log.Printf("auth: issue session: %v", err)
+		slog.Error("Issue session failed", "error", err)
 		http.Error(w, "could not create session", http.StatusInternalServerError)
 		return
 	}
 	http.SetCookie(w, a.sessionCookie(r, token, expiresAt))
-	log.Printf("auth: %s signed in from client %s", a.username, client)
+	slog.Info("Signed in", "user", a.username, "client", client)
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
@@ -251,9 +251,9 @@ func (a *Authenticator) LogoutHandler() http.Handler {
 		}
 		if session, ok := a.sessionFromRequest(r); ok {
 			if a.revocations.revoke(session.id, session.ExpiresAt, a.now()) {
-				log.Printf("auth: %s signed out", a.username)
+				slog.Info("Signed out", "user", a.username)
 			} else {
-				log.Printf("auth: %s signed out, but %d signed-out sessions are already remembered; this session stays valid until it expires", a.username, maxRevokedSessions)
+				slog.Warn("Signed out, but the revocation list is full; this session stays valid until it expires", "user", a.username, "rememberedSessions", maxRevokedSessions)
 			}
 		}
 		http.SetCookie(w, a.sessionCookie(r, "", time.Unix(0, 0)))
@@ -318,7 +318,7 @@ func renderLogin(w http.ResponseWriter, status int, next, message string) {
 		Next  string
 		Error string
 	}{CSS: template.CSS(loginCSS), Next: next, Error: message}); err != nil {
-		log.Printf("auth: render login page: %v", err)
+		slog.Error("Render login page failed", "error", err)
 		http.Error(w, "could not render sign-in page", http.StatusInternalServerError)
 		return
 	}
@@ -390,11 +390,11 @@ func (a *Authenticator) allowLogin(client, proxy string, now time.Time) (bool, t
 	return ok && proxyOK, wait
 }
 
-func viaProxy(proxy string) string {
+func clientAttrs(client, proxy string) []any {
 	if proxy == "" {
-		return ""
+		return []any{"client", client}
 	}
-	return " via " + proxy
+	return []any{"client", client, "proxy", proxy}
 }
 
 // trustedProxyNetworks are private, shared, and loopback ranges. A sign-in from

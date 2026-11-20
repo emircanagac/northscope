@@ -120,7 +120,7 @@ func TestWatcherReportsForbiddenResourceWhileWaitingForCacheSync(t *testing.T) {
 
 	eventually(t, 5*time.Second, "pods to be reported as degraded and unsynced", func() bool {
 		output := logs.String()
-		return strings.Contains(output, "unsynced: pods (last error: ") && strings.Contains(output, "pods is forbidden: RBAC: access denied)")
+		return strings.Contains(output, `unsynced="pods (last error: `) && strings.Contains(output, "pods is forbidden: RBAC: access denied)")
 	})
 
 	status := watcher.Status()
@@ -147,7 +147,7 @@ func TestWatcherReportsForbiddenResourceWhileWaitingForCacheSync(t *testing.T) {
 	if !ok || !services.Synced || services.Degraded || services.LastSuccessAt == nil {
 		t.Fatalf("expected services to be synced and healthy, got %#v", services)
 	}
-	if !strings.Contains(logs.String(), "NorthScope watch for pods degraded") {
+	if !strings.Contains(logs.String(), "Watch degraded; its topology data may be stale or incomplete resource=pods") {
 		t.Fatalf("expected degraded transition to be logged, got:\n%s", logs.String())
 	}
 

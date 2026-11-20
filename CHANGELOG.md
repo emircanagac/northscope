@@ -4,8 +4,18 @@ All notable changes to NorthScope will be documented in this file.
 
 This project follows a lightweight changelog style inspired by Keep a Changelog. NorthScope is an early preview: real-cluster validation for scale and platform-specific installs is still in progress.
 
-## Unreleased
+## 1.4.0 - 2026-11-20
 
+- Redesigned UI. The layout keeps the route list beside the graph, while colors, type, borders, and controls follow GitHub's open source Primer design system: neutral surfaces, one accent color, and color reserved for health. Health is also shown by icon shape, so it does not depend on color alone. Resource kinds have their own icons (from Lucide, ISC License), route details have a copy button for the `kubectl` command, and the UI code is split into components.
+- Accessibility: the namespace picker is a keyboard-operable combobox (arrow keys, Home, End, Enter, Escape), the page has landmarks and headings, connection status is announced, focus is always visible, and reduced-motion settings turn off animations. CI checks WCAG 2.1 AA with axe in both themes.
+- Live updates are sent as deltas. After the first full snapshot, a browser receives only the nodes and edges that changed: a change to one Pod in a 20,000-Pod cluster is under 1 KB instead of about 20 MB. A browser tab still running an older UI after an upgrade keeps receiving full snapshots.
+- Pods, Nodes, Endpoints, and EndpointSlices are trimmed to the fields NorthScope reads before they are cached; a Node takes about 1.4 KB instead of 12 KB. Updates that cannot change the topology, such as status heartbeats, restart counts, Endpoints leader-election renewals on older control planes, and informer resyncs, no longer rebuild the snapshot.
+- Fixed: on a cluster where something changed more often than every 250 ms, the debounce kept restarting and the topology only refreshed on the 10-minute resync. A rebuild now runs at most 2 seconds after the first change.
+- Change detection fingerprints nodes and edges instead of comparing whole snapshots with reflection, which is nearly twice as fast and allocates a sixth of the memory.
+- The UI lists routes without drawing them and builds the graph for the selected host only. Layout no longer sorts a column once per node, the graph renders only the nodes in view, and search filters in the background, so a 2,000-host cluster stays responsive.
+- New metrics: the `northscope_snapshot_build_seconds` histogram, `northscope_snapshot_deltas_total`, `northscope_snapshot_encoded_bytes`, `northscope_websocket_messages_total` and `northscope_websocket_payload_bytes_total` by message type, and `northscope_watch_events_total` by resource and event.
+- Logs are structured: messages carry fields such as `resource`, `error`, and `version`, as `key=value` in the text format and as JSON keys with `logFormat: json`. Several messages were reworded, so update log searches that match their old text.
+- Benchmarks at 100, 2,000, and 20,000 Pods, with the results in [docs/production-access.md](docs/production-access.md#capacity-guidance), and `go run ./hack/demo`, which runs NorthScope against a generated cluster for UI development and screenshots.
 - Dependabot opens one monthly pull request for Go modules, UI packages, GitHub Actions, and Docker base images instead of one per group.
 - CI fails when `go.mod` and the golang build image name different Go releases, because tests and vulnerability scans use `go.mod` while release images use the image. Dependabot only bumps the image.
 - Updated `azure/setup-helm` and `docker/login-action`.

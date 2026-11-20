@@ -2,6 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens. The color roles (canvas, default and muted foreground,
+ * borders, one accent, and success/attention/danger reserved for state) and
+ * their values follow GitHub's open source Primer design system (MIT
+ * License, https://primer.style). Resource kinds are told apart by icon and
+ * label, not by color, so color always means health.
+ */
+:root {
+  color-scheme: light;
+  --ns-canvas: #f6f8fa;
+  --ns-surface: #ffffff;
+  --ns-surface-muted: #f6f8fa;
+  --ns-surface-hover: #eff2f5;
+  --ns-surface-selected: #ddf4ff;
+  --ns-border: #d1d9e0;
+  --ns-border-muted: #e1e6eb;
+  --ns-fg: #1f2328;
+  --ns-fg-muted: #59636e;
+  --ns-fg-subtle: #6e7781;
+  --ns-accent: #0969da;
+  --ns-accent-emphasis: #0969da;
+  --ns-accent-muted: #ddf4ff;
+  --ns-on-emphasis: #ffffff;
+  --ns-success: #1a7f37;
+  --ns-success-muted: #dafbe1;
+  --ns-attention: #9a6700;
+  --ns-attention-muted: #fff8c5;
+  --ns-danger: #d1242f;
+  --ns-danger-muted: #ffebe9;
+  --ns-edge: #8c959f;
+  --ns-grid: #d8dee4;
+  --ns-shadow: 0 1px 0 rgb(31 35 40 / 0.04), 0 1px 3px rgb(31 35 40 / 0.08);
+  --ns-shadow-overlay: 0 1px 3px rgb(31 35 40 / 0.12), 0 8px 24px rgb(66 74 83 / 0.12);
+}
+
+.dark {
+  color-scheme: dark;
+  --ns-canvas: #0d1117;
+  --ns-surface: #151b23;
+  --ns-surface-muted: #0d1117;
+  --ns-surface-hover: #1c232c;
+  --ns-surface-selected: #121d2f;
+  --ns-border: #3d444d;
+  --ns-border-muted: #2a313a;
+  --ns-fg: #f0f6fc;
+  --ns-fg-muted: #9198a1;
+  --ns-fg-subtle: #848d97;
+  --ns-accent: #4493f8;
+  --ns-accent-emphasis: #1f6feb;
+  --ns-accent-muted: #121d2f;
+  --ns-on-emphasis: #ffffff;
+  --ns-success: #3fb950;
+  --ns-success-muted: #12261e;
+  --ns-attention: #d29922;
+  --ns-attention-muted: #272115;
+  --ns-danger: #f85149;
+  --ns-danger-muted: #25171c;
+  --ns-edge: #656c76;
+  --ns-grid: #21262d;
+  --ns-shadow: 0 0 0 1px transparent;
+  --ns-shadow-overlay: 0 0 0 1px #3d444d, 0 8px 24px rgb(1 4 9 / 0.6);
+}
+
 html,
 body,
 #root {
@@ -11,55 +74,97 @@ body,
 }
 
 body {
+  background: var(--ns-canvas);
+  color: var(--ns-fg);
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji";
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ns-accent);
+  outline-offset: -1px;
+}
+
+.react-flow {
+  --xy-background-color: var(--ns-canvas);
+  --xy-background-pattern-color: var(--ns-grid);
 }
 
 .react-flow__node {
   transition: none;
 }
 
+.react-flow__node:focus-visible {
+  outline: 2px solid var(--ns-accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.react-flow__edge-path {
+  stroke: var(--ns-edge);
+}
+
 .northscope-edge-label {
   position: absolute;
+  border: 1px solid var(--ns-border-muted);
   border-radius: 4px;
-  background: rgb(248 250 252 / 0.96);
-  padding: 4px 6px;
-  color: rgb(51 65 85);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
+  background: var(--ns-surface);
+  padding: 2px 6px;
+  color: var(--ns-fg-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
   white-space: nowrap;
   pointer-events: none;
 }
 
-.dark .northscope-edge-label {
-  background: rgb(15 23 42 / 0.96);
-  color: rgb(203 213 225);
-}
-
-.dark .react-flow__controls {
+.react-flow__controls {
   overflow: hidden;
-  border: 1px solid rgb(51 65 85);
-  background: rgb(15 23 42);
-  box-shadow: none;
+  border: 1px solid var(--ns-border);
+  border-radius: 6px;
+  background: var(--ns-surface);
+  box-shadow: var(--ns-shadow);
 }
 
-.dark .react-flow__controls-button {
-  border-bottom-color: rgb(51 65 85);
-  background: rgb(15 23 42);
-  color: rgb(226 232 240);
+.react-flow__controls-button {
+  border-bottom: 1px solid var(--ns-border-muted);
+  background: var(--ns-surface);
+  color: var(--ns-fg-muted);
 }
 
-.dark .react-flow__controls-button:hover {
-  background: rgb(30 41 59);
+.react-flow__controls-button:hover {
+  background: var(--ns-surface-hover);
+  color: var(--ns-fg);
 }
 
-.dark .react-flow__controls-button svg {
+.react-flow__controls-button svg {
   fill: currentColor;
 }
 
-.dark .react-flow__attribution {
-  background: rgb(15 23 42 / 0.84);
-  color: rgb(148 163 184);
+.react-flow__attribution {
+  background: transparent;
+  color: var(--ns-fg-subtle);
+}
+
+.react-flow__attribution a {
+  color: inherit;
+}
+
+/* Long route lists render only the groups on screen. */
+.ns-route-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }

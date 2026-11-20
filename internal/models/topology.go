@@ -84,6 +84,29 @@ type TopologySnapshot struct {
 	Edges       []Edge           `json:"edges"`
 }
 
+// TopologyDeltaType marks a WebSocket message as a TopologyDelta. Full
+// snapshots carry no type.
+const TopologyDeltaType = "delta"
+
+// TopologyDelta turns the snapshot with BaseVersion into the snapshot with
+// Version: nodes and edges are replaced or added by ID, removed IDs are
+// dropped, and the inventory and health replace the old ones. Nodes and edges
+// stay sorted by ID. Unchanged nodes keep the default position they had in
+// the base snapshot.
+type TopologyDelta struct {
+	Type        string           `json:"type"`
+	Instance    string           `json:"instance"`
+	Version     int64            `json:"version"`
+	BaseVersion int64            `json:"baseVersion"`
+	GeneratedAt time.Time        `json:"generatedAt"`
+	Inventory   ClusterInventory `json:"inventory"`
+	Health      SnapshotHealth   `json:"health"`
+	UpsertNodes []Node           `json:"upsertNodes,omitempty"`
+	RemoveNodes []string         `json:"removeNodes,omitempty"`
+	UpsertEdges []Edge           `json:"upsertEdges,omitempty"`
+	RemoveEdges []string         `json:"removeEdges,omitempty"`
+}
+
 type HealthStatus string
 
 const (

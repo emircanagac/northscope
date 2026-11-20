@@ -8,7 +8,7 @@ Read-only Kubernetes traffic topology debugger. Pick a host and see its configur
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/northscope-dark.png">
-  <img alt="NorthScope showing the route for shop.demo.localhost from the load balancer to its Pods" src="docs/assets/northscope-light.png">
+  <img alt="NorthScope showing the route for svc-01.team-000.example.test from the load balancer to Pods that are not ready, with the diagnosis and a kubectl command" src="docs/assets/northscope-light.png">
 </picture>
 
 ## Features

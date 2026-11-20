@@ -22,7 +22,7 @@ export function SnapshotAge({ generatedAt, version }: { generatedAt: string; ver
     <span
       data-testid="snapshot-age"
       title={`Snapshot v${version} generated ${new Date(generatedAt).toLocaleString()}. NorthScope sends a new snapshot when topology or watch health changes.`}
-      className="whitespace-nowrap text-[11px] font-semibold text-slate-500 dark:text-slate-400"
+      className="whitespace-nowrap text-xs text-fg-muted"
     >
       Snapshot {age}
     </span>
