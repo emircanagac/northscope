@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import type { SnapshotHealth } from '../watchHealth';
 import { checkSession, redirectToLogin } from '../auth.ts';
+import { applyTopologyMessage, type TopologyMessage } from '../topologyDelta.ts';
+
+export { acceptSnapshot } from '../topologyDelta.ts';
 
 export type NodeKind =
   | 'F5'
@@ -73,24 +76,6 @@ export interface TopologyStreamState {
   error: string | null;
 }
 
-// Versions only increase within one backend process. A new connection can
-// reach a restarted process or another replica whose counter starts again at
-// 1, so the first snapshot of a connection and any snapshot from a different
-// instance replace the current one; only the rest must have a newer version.
-export function acceptSnapshot(
-  current: TopologySnapshot | null,
-  incoming: TopologySnapshot,
-  firstOnConnection: boolean,
-): TopologySnapshot {
-  if (!current || firstOnConnection || incoming.instance !== current.instance) {
-    return incoming;
-  }
-  if (incoming.version <= current.version) {
-    return current;
-  }
-  return incoming;
-}
-
 function resolveWebSocketURL(endpoint: string): string {
   if (endpoint.startsWith('ws://') || endpoint.startsWith('wss://')) {
     return endpoint;
@@ -100,8 +85,12 @@ function resolveWebSocketURL(endpoint: string): string {
   return `${protocol}//${window.location.host}${endpoint}`;
 }
 
-export function useTopologyStream(endpoint = '/ws'): TopologyStreamState {
+// The stream asks for deltas: after the first full snapshot the backend sends
+// only the nodes and edges that changed, which on a large cluster is bytes
+// instead of megabytes per change.
+export function useTopologyStream(endpoint = '/ws?delta=1'): TopologyStreamState {
   const [snapshot, setSnapshot] = useState<TopologySnapshot | null>(null);
+  const snapshotRef = useRef<TopologySnapshot | null>(null);
   const [status, setStatus] = useState<StreamStatus>('connecting');
   const [error, setError] = useState<string | null>(null);
   const reconnectTimer = useRef<number | null>(null);
@@ -113,32 +102,52 @@ export function useTopologyStream(endpoint = '/ws'): TopologyStreamState {
 
     const connect = () => {
       setStatus('connecting');
-      socket = new WebSocket(resolveWebSocketURL(endpoint));
+      const current = new WebSocket(resolveWebSocketURL(endpoint));
+      socket = current;
       let firstOnConnection = true;
+      let resyncing = false;
 
-      socket.onopen = () => {
+      current.onopen = () => {
         retryDelayMs = 1000;
         setStatus('connected');
         setError(null);
       };
 
-      socket.onmessage = (event) => {
+      current.onmessage = (event) => {
+        if (resyncing) {
+          return;
+        }
         try {
-          const incoming = JSON.parse(event.data) as TopologySnapshot;
-          const first = firstOnConnection;
+          const message = JSON.parse(event.data) as TopologyMessage;
+          const applied = applyTopologyMessage(snapshotRef.current, message, firstOnConnection);
           firstOnConnection = false;
-          setSnapshot((current) => acceptSnapshot(current, incoming, first));
+          if (applied.resync) {
+            // A delta that does not fit the current snapshot means this
+            // connection's state is unknown; a new connection starts with a
+            // full snapshot.
+            resyncing = true;
+            current.close();
+            return;
+          }
+          if (applied.snapshot !== snapshotRef.current) {
+            snapshotRef.current = applied.snapshot;
+            setSnapshot(applied.snapshot);
+          }
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Invalid topology payload');
         }
       };
 
-      socket.onerror = () => {
+      current.onerror = () => {
         setError('WebSocket connection failed');
       };
 
-      socket.onclose = () => {
+      current.onclose = () => {
         if (closedByReact) {
+          return;
+        }
+        if (resyncing) {
+          connect();
           return;
         }
 

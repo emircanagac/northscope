@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,11 +27,14 @@ type Server struct {
 	upgrader   websocket.Upgrader
 	auth       *auth.Authenticator
 	frames     snapshotFrames
+	streams    streamCounters
 
 	// sessionCheckPeriod is how often an open WebSocket checks whether its
 	// session was signed out.
 	sessionCheckPeriod time.Duration
 }
+
+type publication = k8s.Publication
 
 // Option configures optional Server behavior.
 type Option func(*Server)
@@ -259,15 +262,30 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_unchanged_total Successful builds skipped because topology and watch health were unchanged.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_unchanged_total counter\n")
 	_, _ = fmt.Fprintf(w, "northscope_snapshot_unchanged_total %d\n", metrics.SnapshotUnchangedTotal)
+	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_deltas_total Published snapshots that browsers can apply as a delta of the previous one.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_deltas_total counter\n")
+	_, _ = fmt.Fprintf(w, "northscope_snapshot_deltas_total %d\n", metrics.SnapshotDeltasTotal)
 	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_build_duration_seconds Duration of the last topology snapshot build.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_build_duration_seconds gauge\n")
 	_, _ = fmt.Fprintf(w, "northscope_snapshot_build_duration_seconds %.6f\n", metrics.LastSnapshotBuildDurationSeconds)
+	writeHistogram(w, "northscope_snapshot_build_seconds", "Duration of topology snapshot builds.", metrics.SnapshotBuildDurations)
+	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_encoded_bytes JSON size of the newest full snapshot sent to a browser, before compression.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_encoded_bytes gauge\n")
+	_, _ = fmt.Fprintf(w, "northscope_snapshot_encoded_bytes %d\n", s.frames.snapshotBytes.Load())
 	_, _ = fmt.Fprintf(w, "# HELP northscope_snapshot_generated_timestamp_seconds Unix time when the published topology snapshot was generated.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_snapshot_generated_timestamp_seconds gauge\n")
 	_, _ = fmt.Fprintf(w, "northscope_snapshot_generated_timestamp_seconds %s\n", unixSeconds(metrics.SnapshotGeneratedAt))
 	_, _ = fmt.Fprintf(w, "# HELP northscope_websocket_clients Current topology websocket subscribers.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_websocket_clients gauge\n")
 	_, _ = fmt.Fprintf(w, "northscope_websocket_clients %d\n", metrics.WebsocketSubscribers)
+	_, _ = fmt.Fprintf(w, "# HELP northscope_websocket_messages_total Topology messages sent to browsers, by type.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_websocket_messages_total counter\n")
+	_, _ = fmt.Fprintf(w, "northscope_websocket_messages_total{type=\"snapshot\"} %d\n", s.streams.snapshotMessages.Load())
+	_, _ = fmt.Fprintf(w, "northscope_websocket_messages_total{type=\"delta\"} %d\n", s.streams.deltaMessages.Load())
+	_, _ = fmt.Fprintf(w, "# HELP northscope_websocket_payload_bytes_total JSON bytes of topology messages sent to browsers before compression, by type.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_websocket_payload_bytes_total counter\n")
+	_, _ = fmt.Fprintf(w, "northscope_websocket_payload_bytes_total{type=\"snapshot\"} %d\n", s.streams.snapshotBytes.Load())
+	_, _ = fmt.Fprintf(w, "northscope_websocket_payload_bytes_total{type=\"delta\"} %d\n", s.streams.deltaBytes.Load())
 
 	_, _ = fmt.Fprintf(w, "# HELP northscope_informer_synced Whether the informer cache for a watched resource completed its initial list.\n")
 	_, _ = fmt.Fprintf(w, "# TYPE northscope_informer_synced gauge\n")
@@ -293,6 +311,30 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = fmt.Fprintf(w, "northscope_last_watch_success_timestamp_seconds{resource=\"%s\"} %s\n", labelValue(resource.Resource), unixSeconds(lastSuccess))
 	}
+	_, _ = fmt.Fprintf(w, "# HELP northscope_watch_events_total Watch events received per resource. Ignored updates could not change the topology, such as status heartbeats and resyncs, and trigger no rebuild.\n")
+	_, _ = fmt.Fprintf(w, "# TYPE northscope_watch_events_total counter\n")
+	for _, events := range metrics.WatchEvents {
+		resource := labelValue(events.Resource)
+		_, _ = fmt.Fprintf(w, "northscope_watch_events_total{resource=\"%s\",event=\"add\"} %d\n", resource, events.Added)
+		_, _ = fmt.Fprintf(w, "northscope_watch_events_total{resource=\"%s\",event=\"update\"} %d\n", resource, events.Updated)
+		_, _ = fmt.Fprintf(w, "northscope_watch_events_total{resource=\"%s\",event=\"delete\"} %d\n", resource, events.Deleted)
+		_, _ = fmt.Fprintf(w, "northscope_watch_events_total{resource=\"%s\",event=\"ignored_update\"} %d\n", resource, events.Ignored)
+	}
+}
+
+func writeHistogram(w io.Writer, name, help string, histogram k8s.Histogram) {
+	_, _ = fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	_, _ = fmt.Fprintf(w, "# TYPE %s histogram\n", name)
+	for i, bound := range histogram.Bounds {
+		var count uint64
+		if i < len(histogram.Counts) {
+			count = histogram.Counts[i]
+		}
+		_, _ = fmt.Fprintf(w, "%s_bucket{le=\"%s\"} %d\n", name, strconv.FormatFloat(bound, 'g', -1, 64), count)
+	}
+	_, _ = fmt.Fprintf(w, "%s_bucket{le=\"+Inf\"} %d\n", name, histogram.Count)
+	_, _ = fmt.Fprintf(w, "%s_sum %s\n", name, strconv.FormatFloat(histogram.Sum, 'f', 6, 64))
+	_, _ = fmt.Fprintf(w, "%s_count %d\n", name, histogram.Count)
 }
 
 var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
@@ -316,9 +358,13 @@ func unixSeconds(value time.Time) string {
 }
 
 func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
+	// Browsers that can apply deltas ask for them; others, such as a tab
+	// still running an older UI after an upgrade, keep getting full
+	// snapshots.
+	wantsDeltas := r.URL.Query().Get("delta") == "1"
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("websocket upgrade failed: %v", err)
+		slog.Warn("WebSocket upgrade failed", "remote", r.RemoteAddr, "error", err)
 		return
 	}
 	defer func() { _ = conn.Close() }()
@@ -356,6 +402,7 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 		defer checkTicker.Stop()
 		sessionCheck = checkTicker.C
 	}
+	var position streamPosition
 	closeStream := func(reason string) {
 		closeMessage := websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason)
 		_ = conn.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(websocketWriteWait))
@@ -379,21 +426,23 @@ func (s *Server) handleTopologyStream(w http.ResponseWriter, r *http.Request) {
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(websocketWriteWait)); err != nil {
 				return
 			}
-		case snapshot, ok := <-updates:
+		case publication, ok := <-updates:
 			if !ok {
 				return
 			}
-			frame, err := s.frames.frame(snapshot)
+			frame, delta, err := s.nextFrame(publication, wantsDeltas, position)
 			if err != nil {
-				log.Printf("encode topology snapshot v%d: %v", snapshot.Version, err)
+				slog.Error("Encode topology message failed", "version", publication.Snapshot.Version, "error", err)
 				return
 			}
 			if err := conn.SetWriteDeadline(time.Now().Add(websocketWriteWait)); err != nil {
 				return
 			}
-			if err := conn.WritePreparedMessage(frame); err != nil {
+			if err := conn.WritePreparedMessage(frame.prepared); err != nil {
 				return
 			}
+			s.streams.record(delta, frame.size)
+			position = streamPosition{instance: publication.Snapshot.Instance, version: publication.Snapshot.Version}
 		}
 	}
 }

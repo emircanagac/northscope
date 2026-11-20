@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 const snapshot = {
@@ -229,7 +230,10 @@ async function installFakeTopologyStream(page: Page, topologySnapshot: object | 
       onerror: SocketHandler = null;
       onclose: SocketHandler = null;
 
-      constructor() {
+      url: string;
+
+      constructor(url: string) {
+        this.url = url;
         const control = window.__northscopeSocketControl;
         control.instances.push(this);
         const connectSnapshot = control.connectSnapshot;
@@ -280,7 +284,7 @@ async function installFakeTopologyStream(page: Page, topologySnapshot: object | 
 declare global {
   interface Window {
     __northscopeSocketControl: {
-      instances: Array<{ close(): void }>;
+      instances: Array<{ close(): void; url: string }>;
       connectSnapshot: unknown;
       setConnectSnapshot(payload: unknown): void;
       closeLatest(): void;
@@ -738,7 +742,7 @@ test('selected routes are kept in the URL so a shared link reopens them', async 
 
   await page.reload();
   await expect(page.getByTestId('stream-status')).toHaveText('Live config');
-  await expect(page.getByTestId('host-route').filter({ hasText: 'shop.example.com' })).toContainText('Selected');
+  await expect(page.getByTestId('host-route').filter({ hasText: 'shop.example.com' })).toHaveAttribute('aria-current', 'true');
   await expect(page.getByRole('button', { name: 'Expanded' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('topology-node-card').first()).toBeVisible();
 });
@@ -786,4 +790,67 @@ test('route details explain conflicts and draw canary backends', async ({ page }
   await expect(details).toContainText('kubectl get ingress -A -o wide');
   await expect(page.getByTestId('host-route')).toContainText('Also defined by demo/store-v2');
   await expect(page.getByTestId('topology-node-card').filter({ hasText: 'frontend-canary' })).toBeVisible();
+});
+
+test('live updates arrive as deltas and a delta that does not fit reconnects', async ({ page }) => {
+  await openSelectedTopology(page);
+  await page.getByRole('button', { name: 'Expanded' }).click();
+  expect(await page.evaluate(() => window.__northscopeSocketControl.instances.at(-1)?.url)).toContain('delta=1');
+
+  const pod = snapshot.nodes.find((item) => item.data.kind === 'Pod');
+  await page.evaluate(
+    (payload) => window.__northscopeSocketControl.send(payload),
+    {
+      type: 'delta',
+      instance: snapshot.instance,
+      version: 2,
+      baseVersion: 1,
+      generatedAt: '2026-07-16T12:00:02Z',
+      inventory: snapshot.inventory,
+      health: { status: 'ok' },
+      upsertNodes: [{ ...pod, data: { ...pod?.data, status: 'CrashLoopBackOff' } }],
+    },
+  );
+  await expect(page.getByTestId('topology-node-card').filter({ hasText: 'CrashLoop' })).toBeVisible();
+
+  const connections = await page.evaluate(() => window.__northscopeSocketControl.instances.length);
+  await page.evaluate(
+    (payload) => window.__northscopeSocketControl.send(payload),
+    { type: 'delta', instance: snapshot.instance, version: 9, baseVersion: 8, generatedAt: '2026-07-16T12:00:09Z' },
+  );
+  await expect.poll(() => page.evaluate(() => window.__northscopeSocketControl.instances.length)).toBe(connections + 1);
+  await expect(page.getByTestId('stream-status')).toHaveText('Live config');
+});
+
+test('the namespace picker works from the keyboard', async ({ page }) => {
+  await openSelectedTopology(page);
+  const picker = page.getByRole('combobox', { name: 'Namespace' });
+  await picker.focus();
+  await expect(picker).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('option', { name: /demo/ })).toBeVisible();
+  await expect(picker).toHaveAttribute('aria-activedescendant', /option-1$/);
+  await page.keyboard.press('Enter');
+
+  await expect(page).toHaveURL(/[?&]namespace=demo/);
+  await expect(picker).toHaveAttribute('aria-expanded', 'false');
+  await expect(picker).toHaveValue('demo');
+});
+
+test('the main view has no serious accessibility violations in either theme', async ({ page }) => {
+  // Without transitions axe reads final colors right after the theme switch.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openSelectedTopology(page);
+  for (const theme of ['light', 'dark']) {
+    if (theme === 'dark') {
+      await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+      await expect(page.locator('html')).toHaveClass(/dark/);
+    }
+    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+    const serious = results.violations
+      .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
+      .map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`);
+    expect(serious, `${theme} theme`).toEqual([]);
+  }
 });

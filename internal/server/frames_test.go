@@ -11,9 +11,13 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/emircanagac/northscope/internal/k8s"
-	"github.com/emircanagac/northscope/internal/models"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/emircanagac/northscope/internal/k8s"
+	"github.com/emircanagac/northscope/internal/k8s/synthetic"
+	"github.com/emircanagac/northscope/internal/models"
 )
 
 func TestSnapshotFramesEncodeEachSnapshotOnce(t *testing.T) {
@@ -119,5 +123,93 @@ func TestTopologyEndpointIsNotCached(t *testing.T) {
 	}
 	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
 		t.Fatalf("expected no-store cache control, got %q", cacheControl)
+	}
+}
+
+func TestWebSocketSendsDeltasOnlyToClientsThatAskForThem(t *testing.T) {
+	cluster := synthetic.New(synthetic.Small)
+	client := fake.NewSimpleClientset(cluster.Objects()...)
+	watcher, err := k8s.NewWatcherFromClient(client, time.Minute)
+	if err != nil {
+		t.Fatalf("create watcher: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = watcher.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for !watcher.Ready() {
+		if time.Now().After(deadline) {
+			t.Fatal("watcher did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	server := newTestServer(t, watcher)
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/ws"
+
+	dial := func(path string) *websocket.Conn {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL+path, nil)
+		if err != nil {
+			t.Fatalf("connect %q: %v", path, err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		return conn
+	}
+	read := func(conn *websocket.Conn) map[string]any {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		var message map[string]any
+		if err := conn.ReadJSON(&message); err != nil {
+			t.Fatalf("read message: %v", err)
+		}
+		return message
+	}
+	deltaClient := dial("?delta=1")
+	plainClient := dial("")
+	first := read(deltaClient)
+	if _, typed := first["type"]; typed || read(plainClient)["version"] != first["version"] {
+		t.Fatalf("expected both clients to start with the same full snapshot, got %v", first["type"])
+	}
+
+	pod := cluster.Pods[len(cluster.Pods)-1].DeepCopy()
+	pod.Status.Conditions[1].Status = corev1.ConditionFalse
+	if _, err := client.CoreV1().Pods(pod.Namespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update pod: %v", err)
+	}
+
+	delta := read(deltaClient)
+	if delta["type"] != "delta" || delta["baseVersion"] != first["version"] {
+		t.Fatalf("expected a delta from v%v, got type %v base %v", first["version"], delta["type"], delta["baseVersion"])
+	}
+	upserts, _ := delta["upsertNodes"].([]any)
+	if len(upserts) == 0 || len(upserts) > 5 {
+		t.Fatalf("expected the changed Pod and the few nodes that depend on it, got %d", len(upserts))
+	}
+	if full := read(plainClient); full["type"] != nil || full["version"] != delta["version"] {
+		t.Fatalf("expected the plain client to get the full snapshot v%v, got %v", delta["version"], full["version"])
+	}
+
+	_, metrics := serve(t, server, "/metrics")
+	for _, want := range []string{
+		`northscope_websocket_messages_total{type="delta"} 1`,
+		`northscope_websocket_messages_total{type="snapshot"} 3`,
+		`northscope_snapshot_deltas_total 1`,
+		`northscope_snapshot_build_seconds_bucket{le="+Inf"} 2`,
+		`northscope_watch_events_total{resource="pods",event="update"} 1`,
+	} {
+		if !strings.Contains(metrics, want) {
+			t.Fatalf("expected %q in metrics:\n%s", want, metrics)
+		}
+	}
+	if strings.Contains(metrics, "northscope_snapshot_encoded_bytes 0\n") {
+		t.Fatal("expected the encoded snapshot size to be reported")
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -115,7 +115,7 @@ func (h *informerHealth) recordSuccess(resource string, watching bool) {
 	h.mu.Unlock()
 
 	if recovered {
-		log.Printf("NorthScope watch for %s recovered", resource)
+		slog.Info("Watch recovered", "resource", resource)
 		h.changed()
 	}
 }
@@ -142,7 +142,7 @@ func (h *informerHealth) recordError(resource string, err error) {
 	h.mu.Unlock()
 
 	if degraded {
-		log.Printf("NorthScope watch for %s degraded; its topology data may be stale or incomplete: %v", resource, err)
+		slog.Warn("Watch degraded; its topology data may be stale or incomplete", "resource", resource, "error", err)
 		h.changed()
 	}
 }

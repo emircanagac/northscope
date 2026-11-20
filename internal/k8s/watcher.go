@@ -3,15 +3,16 @@ package k8s
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -31,6 +32,11 @@ import (
 
 const defaultResyncPeriod = 10 * time.Minute
 const defaultRebuildDebounce = 250 * time.Millisecond
+
+// defaultMaxRebuildDelay bounds how long a steady stream of changes can
+// postpone a rebuild: the debounce restarts on every change, so on a busy
+// cluster without this bound the topology would only refresh on resync.
+const defaultMaxRebuildDelay = 2 * time.Second
 const optionalResourceDiscoveryInterval = 2 * time.Minute
 const cacheSyncPollInterval = 100 * time.Millisecond
 const defaultCacheSyncReportInterval = 30 * time.Second
@@ -40,6 +46,7 @@ type Watcher struct {
 	dynamicClient   dynamic.Interface
 	resyncPeriod    time.Duration
 	rebuildDebounce time.Duration
+	maxRebuildDelay time.Duration
 	gatewayAPI      bool
 	f5              bool
 	namespace       string
@@ -60,7 +67,8 @@ type Watcher struct {
 	instance        string
 	version         int64
 	latest          models.TopologySnapshot
-	subscribers     map[chan models.TopologySnapshot]struct{}
+	latestIndex     topologyIndex
+	subscribers     map[chan Publication]struct{}
 	ready           uint32
 	rebuildRequests chan struct{}
 
@@ -68,7 +76,11 @@ type Watcher struct {
 	snapshotBuildErrorsTotal  uint64
 	snapshotPublishesTotal    uint64
 	snapshotUnchangedTotal    uint64
+	snapshotDeltasTotal       uint64
 	lastSnapshotBuildDuration time.Duration
+	buildDurations            durationHistogram
+
+	events eventCounters
 
 	optionalResourceDiscoveryWarningOnce sync.Once
 	optionalResourceMu                   sync.Mutex
@@ -94,6 +106,13 @@ func DefaultWatcherOptions() WatcherOptions {
 	return WatcherOptions{GatewayAPI: true, F5: true}
 }
 
+// Publication is a published snapshot. Delta, when set, turns the previous
+// version from the same process into this one.
+type Publication struct {
+	Snapshot models.TopologySnapshot
+	Delta    *models.TopologyDelta
+}
+
 type WatcherMetrics struct {
 	Ready                            bool
 	SnapshotVersion                  int64
@@ -102,11 +121,14 @@ type WatcherMetrics struct {
 	SnapshotBuildsTotal              uint64
 	SnapshotBuildErrorsTotal         uint64
 	SnapshotPublishesTotal           uint64
+	SnapshotDeltasTotal              uint64
 	SnapshotUnchangedTotal           uint64
 	LastSnapshotBuildDurationSeconds float64
+	SnapshotBuildDurations           Histogram
 	SnapshotGeneratedAt              time.Time
 	WebsocketSubscribers             int
 	Resources                        []models.ResourceHealth
+	WatchEvents                      []WatchEvents
 }
 
 func NewWatcher(config *rest.Config) (*Watcher, error) {
@@ -144,7 +166,7 @@ func newWatcherFromClients(
 		resyncPeriod = defaultResyncPeriod
 	}
 
-	factoryOptions := []informers.SharedInformerOption{informers.WithTransform(stripManagedFields)}
+	factoryOptions := []informers.SharedInformerOption{informers.WithTransform(trimForTopology)}
 	if options.Namespace != "" {
 		factoryOptions = append(factoryOptions, informers.WithNamespace(options.Namespace))
 	}
@@ -153,9 +175,9 @@ func newWatcherFromClients(
 		return nil, err
 	}
 	if endpointSliceAPI == "" {
-		log.Printf("NorthScope compatibility: EndpointSlice API is not served; using legacy Endpoints only")
+		slog.Info("EndpointSlice API is not served; using legacy Endpoints only")
 	} else {
-		log.Printf("NorthScope compatibility: using EndpointSlice API %s", endpointSliceAPI)
+		slog.Info("Using EndpointSlice API", "apiVersion", endpointSliceAPI)
 	}
 
 	factory := informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod, factoryOptions...)
@@ -170,6 +192,7 @@ func newWatcherFromClients(
 		dynamicClient:        dynamicClient,
 		resyncPeriod:         resyncPeriod,
 		rebuildDebounce:      defaultRebuildDebounce,
+		maxRebuildDelay:      defaultMaxRebuildDelay,
 		gatewayAPI:           options.GatewayAPI,
 		f5:                   options.F5,
 		namespace:            options.Namespace,
@@ -183,7 +206,7 @@ func newWatcherFromClients(
 		nodeInformer:         factory.Core().V1().Nodes(),
 		health:               health,
 		instance:             rand.Text(),
-		subscribers:          make(map[chan models.TopologySnapshot]struct{}),
+		subscribers:          make(map[chan Publication]struct{}),
 		rebuildRequests:      make(chan struct{}, 1),
 
 		cacheSyncReportInterval: defaultCacheSyncReportInterval,
@@ -204,7 +227,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("NorthScope Kubernetes caches synced")
+	slog.Info("Kubernetes caches synced")
 	w.startOptionalInformers(ctx)
 	atomic.StoreUint32(&w.ready, 1)
 	w.rebuildAndPublishContext(ctx)
@@ -233,10 +256,10 @@ func (w *Watcher) waitForCacheSync(ctx context.Context) error {
 			return ctx.Err()
 		case <-poll.C:
 		case <-report.C:
-			log.Printf(
-				"NorthScope still waiting for Kubernetes caches after %s; unsynced: %s",
-				time.Since(started).Round(time.Second),
-				describeUnsynced(unsynced),
+			slog.Warn(
+				"Still waiting for Kubernetes caches",
+				"waited", time.Since(started).Round(time.Second).String(),
+				"unsynced", describeUnsynced(unsynced),
 			)
 		}
 	}
@@ -248,7 +271,10 @@ func (w *Watcher) runRebuildLoop(ctx context.Context) error {
 
 	var debounceTimer *time.Timer
 	var debounceC <-chan time.Time
-	stopDebounce := func() {
+	// pendingSince is when the oldest change that has not been rebuilt yet
+	// arrived; zero when nothing is pending.
+	var pendingSince time.Time
+	stopTimer := func() {
 		if debounceTimer == nil {
 			return
 		}
@@ -260,29 +286,41 @@ func (w *Watcher) runRebuildLoop(ctx context.Context) error {
 		}
 		debounceC = nil
 	}
-	defer stopDebounce()
+	defer stopTimer()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			stopDebounce()
+			stopTimer()
+			pendingSince = time.Time{}
 			w.rebuildAndPublishContext(ctx)
 		case <-w.rebuildRequests:
 			if w.rebuildDebounce <= 0 {
 				w.rebuildAndPublishContext(ctx)
 				continue
 			}
+			now := time.Now()
+			if pendingSince.IsZero() {
+				pendingSince = now
+			}
+			// Wait for the burst to settle, but never longer than
+			// maxRebuildDelay after its first change.
+			delay := w.rebuildDebounce
+			if w.maxRebuildDelay > 0 {
+				delay = min(delay, max(0, pendingSince.Add(w.maxRebuildDelay).Sub(now)))
+			}
 			if debounceTimer == nil {
-				debounceTimer = time.NewTimer(w.rebuildDebounce)
+				debounceTimer = time.NewTimer(delay)
 			} else {
-				stopDebounce()
-				debounceTimer.Reset(w.rebuildDebounce)
+				stopTimer()
+				debounceTimer.Reset(delay)
 			}
 			debounceC = debounceTimer.C
 		case <-debounceC:
 			debounceC = nil
+			pendingSince = time.Time{}
 			w.rebuildAndPublishContext(ctx)
 		}
 	}
@@ -312,11 +350,14 @@ func (w *Watcher) Metrics() WatcherMetrics {
 		SnapshotBuildsTotal:              w.snapshotBuildsTotal,
 		SnapshotBuildErrorsTotal:         w.snapshotBuildErrorsTotal,
 		SnapshotPublishesTotal:           w.snapshotPublishesTotal,
+		SnapshotDeltasTotal:              w.snapshotDeltasTotal,
 		SnapshotUnchangedTotal:           w.snapshotUnchangedTotal,
 		LastSnapshotBuildDurationSeconds: w.lastSnapshotBuildDuration.Seconds(),
+		SnapshotBuildDurations:           w.buildDurations.snapshot(),
 		SnapshotGeneratedAt:              w.latest.GeneratedAt,
 		WebsocketSubscribers:             len(w.subscribers),
 		Resources:                        resources,
+		WatchEvents:                      w.events.snapshot(),
 	}
 }
 
@@ -354,17 +395,21 @@ func (w *Watcher) Status() models.WatcherStatus {
 	return status
 }
 
-func (w *Watcher) Subscribe(buffer int) (<-chan models.TopologySnapshot, func()) {
+// Subscribe returns a channel with the latest snapshot, if there is one, and
+// every snapshot published after it. A subscriber that falls behind skips to
+// the newest publication, so the publications it receives are not always
+// consecutive versions.
+func (w *Watcher) Subscribe(buffer int) (<-chan Publication, func()) {
 	if buffer < 1 {
 		buffer = 1
 	}
 
-	ch := make(chan models.TopologySnapshot, buffer)
+	ch := make(chan Publication, buffer)
 
 	w.mu.Lock()
 	w.subscribers[ch] = struct{}{}
 	if !w.latest.GeneratedAt.IsZero() {
-		ch <- w.latest
+		ch <- Publication{Snapshot: w.latest}
 	}
 	w.mu.Unlock()
 
@@ -372,36 +417,26 @@ func (w *Watcher) Subscribe(buffer int) (<-chan models.TopologySnapshot, func())
 }
 
 func (w *Watcher) registerHandlers() error {
-	handler := cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { w.rebuildAndPublishWhenReady() },
-		UpdateFunc: func(oldObj, newObj interface{}) { w.rebuildAndPublishWhenReady() },
-		DeleteFunc: func(obj interface{}) { w.rebuildAndPublishWhenReady() },
+	type resourceInformer struct {
+		resource string
+		informer cache.SharedIndexInformer
 	}
-
-	if _, err := w.ingressInformer.Informer().AddEventHandler(handler); err != nil {
-		return err
-	}
-	if _, err := w.ingressClassInformer.Informer().AddEventHandler(handler); err != nil {
-		return err
-	}
-	if _, err := w.serviceInformer.Informer().AddEventHandler(handler); err != nil {
-		return err
-	}
-	if _, err := w.endpointInformer.Informer().AddEventHandler(handler); err != nil {
-		return err
+	informers := []resourceInformer{
+		{"ingresses.networking.k8s.io", w.ingressInformer.Informer()},
+		{"ingressclasses.networking.k8s.io", w.ingressClassInformer.Informer()},
+		{"services", w.serviceInformer.Informer()},
+		{"endpoints", w.endpointInformer.Informer()},
+		{"pods", w.podInformer.Informer()},
+		{"nodes", w.nodeInformer.Informer()},
 	}
 	if w.endpointSlices != nil {
-		if _, err := w.endpointSlices.informer.AddEventHandler(handler); err != nil {
+		informers = append(informers, resourceInformer{"endpointslices.discovery.k8s.io", w.endpointSlices.informer})
+	}
+	for _, item := range informers {
+		if _, err := item.informer.AddEventHandler(w.eventHandler(item.resource)); err != nil {
 			return err
 		}
 	}
-	if _, err := w.podInformer.Informer().AddEventHandler(handler); err != nil {
-		return err
-	}
-	if _, err := w.nodeInformer.Informer().AddEventHandler(handler); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -426,17 +461,20 @@ func (w *Watcher) rebuildAndPublishContext(ctx context.Context) {
 		w.mu.Lock()
 		w.snapshotBuildErrorsTotal++
 		w.lastSnapshotBuildDuration = time.Since(started)
+		w.buildDurations.observe(w.lastSnapshotBuildDuration)
 		w.mu.Unlock()
-		log.Printf("build topology snapshot failed: %v", err)
+		slog.Error("Build topology snapshot failed", "error", err)
 		return
 	}
 	snapshot.Health = w.health.snapshotHealth()
+	index := indexTopology(snapshot)
 
 	w.mu.Lock()
 	firstSnapshot := w.latest.GeneratedAt.IsZero()
 	w.snapshotBuildsTotal++
 	w.lastSnapshotBuildDuration = time.Since(started)
-	if !firstSnapshot && sameTopology(w.latest, snapshot) && sameHealth(w.latest.Health, snapshot.Health) {
+	w.buildDurations.observe(w.lastSnapshotBuildDuration)
+	if !firstSnapshot && w.latestIndex.equal(index) && sameHealth(w.latest.Health, snapshot.Health) {
 		w.snapshotUnchangedTotal++
 		w.mu.Unlock()
 		return
@@ -444,34 +482,41 @@ func (w *Watcher) rebuildAndPublishContext(ctx context.Context) {
 	w.version++
 	snapshot.Instance = w.instance
 	snapshot.Version = w.version
+	publication := Publication{Snapshot: snapshot}
+	if !firstSnapshot {
+		publication.Delta = topologyDelta(w.latestIndex, index, snapshot, w.latest.Version)
+	}
 	w.latest = snapshot
+	w.latestIndex = index
 	w.snapshotPublishesTotal++
+	if publication.Delta != nil {
+		w.snapshotDeltasTotal++
+	}
 
 	for ch := range w.subscribers {
 		select {
-		case ch <- snapshot:
+		case ch <- publication:
 		default:
 			select {
 			case <-ch:
 			default:
 			}
-			ch <- snapshot
+			ch <- publication
 		}
 	}
 	w.mu.Unlock()
 
 	if firstSnapshot {
-		degraded := ""
-		if snapshot.Health.Status == models.HealthDegraded {
-			degraded = fmt.Sprintf(" (degraded: %s)", strings.Join(degradedResourceNames(snapshot.Health), ", "))
+		attrs := []any{
+			"version", snapshot.Version,
+			"nodes", len(snapshot.Nodes),
+			"edges", len(snapshot.Edges),
+			"buildSeconds", w.lastSnapshotBuildDuration.Seconds(),
 		}
-		log.Printf(
-			"NorthScope ready: snapshot v%d, %d nodes, %d edges%s",
-			snapshot.Version,
-			len(snapshot.Nodes),
-			len(snapshot.Edges),
-			degraded,
-		)
+		if snapshot.Health.Status == models.HealthDegraded {
+			attrs = append(attrs, "degraded", strings.Join(degradedResourceNames(snapshot.Health), ", "))
+		}
+		slog.Info("NorthScope ready", attrs...)
 	}
 }
 
@@ -514,12 +559,38 @@ func (w *Watcher) buildSnapshot(ctx context.Context) (models.TopologySnapshot, e
 	if err != nil {
 		return models.TopologySnapshot{}, err
 	}
-	externalResources := w.optionalExternalResources()
-	scoped := scopeTrafficInputs(ingresses, services, pods, nodes, externalResources, endpoints, endpointSlices)
+	return snapshotFromInputs(w.namespace, snapshotInputs{
+		ingresses:         ingresses,
+		ingressClasses:    ingressClasses,
+		services:          services,
+		endpoints:         endpoints,
+		endpointSlices:    endpointSlices,
+		pods:              pods,
+		nodes:             nodes,
+		externalResources: w.optionalExternalResources(),
+	}), nil
+}
+
+// snapshotInputs are the cached objects one snapshot is built from.
+type snapshotInputs struct {
+	ingresses         []*networkingv1.Ingress
+	ingressClasses    []*networkingv1.IngressClass
+	services          []*corev1.Service
+	endpoints         []*corev1.Endpoints
+	endpointSlices    []*discoveryv1.EndpointSlice
+	pods              []*corev1.Pod
+	nodes             []*corev1.Node
+	externalResources []ExternalResource
+}
+
+func snapshotFromInputs(watchNamespace string, inputs snapshotInputs) models.TopologySnapshot {
+	ingresses, ingressClasses, services, pods, nodes := inputs.ingresses, inputs.ingressClasses, inputs.services, inputs.pods, inputs.nodes
+	externalResources := inputs.externalResources
+	scoped := scopeTrafficInputs(ingresses, services, pods, nodes, externalResources, inputs.endpoints, inputs.endpointSlices)
 	gatewayClasses, gateways, gatewayRoutes, f5Resources := externalResourceInventory(externalResources)
 
 	snapshot := BuildTopologyWithOptions(
-		TopologyOptions{WatchNamespace: w.namespace},
+		TopologyOptions{WatchNamespace: watchNamespace},
 		ingresses,
 		ingressClasses,
 		scoped.services,
@@ -540,7 +611,7 @@ func (w *Watcher) buildSnapshot(ctx context.Context) (models.TopologySnapshot, e
 		Pods:           len(pods),
 		Nodes:          len(nodes),
 	}
-	return ingressScopedSnapshot(snapshot), nil
+	return ingressScopedSnapshot(snapshot)
 }
 
 func externalResourceInventory(resources []ExternalResource) (gatewayClasses, gateways, gatewayRoutes, f5Resources int) {
@@ -656,7 +727,8 @@ func (w *Watcher) syncOptionalInformers(ctx context.Context) {
 	available, err := w.availableOptionalResourceGVRs()
 	if err != nil {
 		w.optionalResourceDiscoveryWarningOnce.Do(func() {
-			log.Printf("optional Gateway/F5 discovery failed; keeping current watches and retrying every %s: %v", optionalResourceDiscoveryInterval, err)
+			slog.Warn("Optional Gateway API and F5 discovery failed; keeping current watches",
+				"retryEvery", optionalResourceDiscoveryInterval.String(), "error", err)
 		})
 		return
 	}
@@ -678,7 +750,7 @@ func (w *Watcher) syncOptionalInformers(ctx context.Context) {
 		running.stop()
 		delete(w.optionalInformers, gvr)
 		w.health.untrack(gvr.GroupResource().String())
-		log.Printf("stopped optional topology watch %s; it is no longer served", gvr.String())
+		slog.Info("Stopped optional topology watch; it is no longer served", "resource", gvr.String())
 		changed = true
 	}
 	for gvr, item := range wanted {
@@ -686,7 +758,7 @@ func (w *Watcher) syncOptionalInformers(ctx context.Context) {
 			continue
 		}
 		if running, err := w.runOptionalInformer(ctx, item); err != nil {
-			log.Printf("register optional topology watch %s failed: %v", gvr.String(), err)
+			slog.Error("Register optional topology watch failed", "resource", gvr.String(), "error", err)
 		} else {
 			w.optionalInformers[gvr] = running
 		}
@@ -705,12 +777,7 @@ func (w *Watcher) runOptionalInformer(ctx context.Context, item optionalResource
 	if err := informer.SetTransform(stripManagedFields); err != nil {
 		return optionalInformer{}, err
 	}
-	handler := cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(interface{}) { w.rebuildAndPublishWhenReady() },
-		UpdateFunc: func(interface{}, interface{}) { w.rebuildAndPublishWhenReady() },
-		DeleteFunc: func(interface{}) { w.rebuildAndPublishWhenReady() },
-	}
-	if _, err := informer.AddEventHandler(handler); err != nil {
+	if _, err := informer.AddEventHandler(w.eventHandler(item.gvr.GroupResource().String())); err != nil {
 		return optionalInformer{}, err
 	}
 	if err := w.health.track(item.gvr.GroupResource().String(), informer, true); err != nil {
@@ -759,7 +826,7 @@ func stripManagedFields(obj interface{}) (interface{}, error) {
 	return obj, nil
 }
 
-func (w *Watcher) unsubscribe(ch chan models.TopologySnapshot) {
+func (w *Watcher) unsubscribe(ch chan Publication) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.subscribers, ch)

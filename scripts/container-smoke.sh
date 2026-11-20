@@ -75,8 +75,8 @@ curl --fail --silent http://127.0.0.1:18080/healthz >/dev/null
 curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null
 expect_match "\"version\":\"${expected_version}\"" curl --fail --silent http://127.0.0.1:18080/api/version
 expect_match '<div id="root"></div>' curl --fail --silent http://127.0.0.1:18080/
-expect_match 'using EndpointSlice API discovery.k8s.io/v1$' docker logs "${container_name}"
-expect_match 'WARNING: authentication is disabled' docker logs "${container_name}"
+expect_match 'Using EndpointSlice API apiVersion=discovery.k8s.io/v1$' docker logs "${container_name}"
+expect_match 'WARN Authentication is disabled' docker logs "${container_name}"
 
 runtime_user="$(docker inspect --format '{{.Config.User}}' "${container_name}")"
 if [[ "${runtime_user}" != "65532:65532" ]]; then
@@ -140,6 +140,6 @@ expect_status 401 --data 'username=admin&password=wrong' "${auth_base}/login"
 expect_status 303 --cookie-jar "${cookie_jar}" --data 'username=admin&password=smoke-password' "${auth_base}/login"
 expect_match "\"version\":\"${expected_version}\"" curl --fail --silent --cookie "${cookie_jar}" "${auth_base}/api/version"
 expect_match '"authEnabled":true' curl --fail --silent --cookie "${cookie_jar}" "${auth_base}/api/session"
-expect_match 'authentication enabled for user "admin"' docker logs "${auth_container_name}"
+expect_match 'Authentication enabled user=admin ' docker logs "${auth_container_name}"
 
 echo "NorthScope runtime image smoke test passed."

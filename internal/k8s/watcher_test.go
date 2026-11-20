@@ -150,7 +150,8 @@ func TestWatcherSendsLatestSnapshotToReconnectedSubscriber(t *testing.T) {
 	defer reconnectedUnsubscribe()
 
 	select {
-	case snapshot := <-reconnectedUpdates:
+	case publication := <-reconnectedUpdates:
+		snapshot := publication.Snapshot
 		if snapshot.Version != 1 {
 			t.Fatalf("expected reconnected subscriber to receive snapshot version 1, got %d", snapshot.Version)
 		}

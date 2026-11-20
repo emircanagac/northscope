@@ -2,7 +2,7 @@ package k8s
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,7 +94,7 @@ func tuneClientConfig(cfg *rest.Config) {
 	cfg.WarningHandlerWithContext = &kubernetesWarningHandler{
 		delegate: delegate,
 		legacyEndpointsLog: func() {
-			log.Printf("NorthScope compatibility: EndpointSlice is preferred; legacy Endpoints fallback remains enabled")
+			slog.Info("The API server prefers EndpointSlice; the legacy Endpoints fallback stays enabled")
 		},
 	}
 }

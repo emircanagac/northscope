@@ -1,5 +1,5 @@
 import type { TopologyEdge, TopologyNode } from './hooks/useTopologyStream';
-import { isControllerNode, isIngressNode, nodeDisplayName } from './topologyView';
+import { isControllerNode, isIngressNode, nodeDisplayName } from './topologyView.ts';
 import {
   ingressHostLaneId,
   layoutTrafficPath,
@@ -8,21 +8,22 @@ import {
   severityRank,
   type RouteItem,
   type TopologyMode,
-} from './trafficGraph';
+} from './trafficGraph.ts';
 
 const TRAFFIC_NODE_ID_PREFIX = 'visual:f5-edge';
+// Edge colors come from the theme tokens in styles.css, so switching the
+// theme does not rebuild the graph.
 const edgeLabelStyle = {
-  fill: '#334155',
-  fontSize: 10,
-  fontWeight: 700,
+  fill: 'var(--ns-fg-muted)',
+  fontSize: 11,
+  fontWeight: 500,
 } as const;
 const edgeLabelBgStyle = {
-  fill: '#f8fafc',
-  fillOpacity: 0.96,
+  fill: 'var(--ns-surface)',
 } as const;
 const edgeStyle = {
-  stroke: '#94a3b8',
-  strokeWidth: 2,
+  stroke: 'var(--ns-edge)',
+  strokeWidth: 1.5,
 } as const;
 interface NamespaceTrafficGraph {
   nodes: TopologyNode[];
@@ -371,19 +372,35 @@ function pickControllerNodePorts(nodesById: Map<string, TopologyNode>, incomingE
   return [candidates[0]];
 }
 
+function appendTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const items = map.get(key);
+  if (items) {
+    items.push(value);
+  } else {
+    map.set(key, [value]);
+  }
+}
+
+// buildNamespaceTrafficGraph lists every traffic route of the namespace (all
+// namespaces when empty) and draws the host lanes in `lanes`. Drawing every
+// lane of a large cluster on each snapshot would cost far more than the one
+// lane the UI shows, so callers list routes with an empty set and draw only
+// the selected host. Without `lanes`, every lane is drawn.
 export function buildNamespaceTrafficGraph(
   namespace: string,
   nodes: TopologyNode[],
   edges: TopologyEdge[],
   mode: TopologyMode,
+  lanes?: ReadonlySet<string>,
 ): NamespaceTrafficGraph {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const outgoingBySource = new Map<string, TopologyEdge[]>();
   const incomingByTarget = new Map<string, TopologyEdge[]>();
   for (const edge of edges) {
-    outgoingBySource.set(edge.source, [...(outgoingBySource.get(edge.source) ?? []), edge]);
-    incomingByTarget.set(edge.target, [...(incomingByTarget.get(edge.target) ?? []), edge]);
+    appendTo(outgoingBySource, edge.source, edge);
+    appendTo(incomingByTarget, edge.target, edge);
   }
+  const drawsLane = (laneId: string) => !lanes || lanes.has(laneId);
   const outgoingEdges = (nodeId: string, kinds?: string[]): TopologyEdge[] =>
     (outgoingBySource.get(nodeId) ?? []).filter((edge) => !kinds || kinds.includes(edgeKind(edge)));
   const incomingEdges = (nodeId: string, kinds?: string[]): TopologyEdge[] =>
@@ -521,10 +538,13 @@ export function buildNamespaceTrafficGraph(
 
     const recordsByHostLane = new Map<string, HostRouteRecord[]>();
     for (const record of routeRecords) {
-      recordsByHostLane.set(record.hostLaneId, [...(recordsByHostLane.get(record.hostLaneId) ?? []), record]);
+      appendTo(recordsByHostLane, record.hostLaneId, record);
     }
 
     for (const [routeHostLaneId, hostRecords] of recordsByHostLane.entries()) {
+      if (!drawsLane(routeHostLaneId)) {
+        continue;
+      }
       const host = hostRecords[0].host;
       const laneExternal = laneNode(namespaceTrafficNode(ingressNamespace), routeHostLaneId);
       const laneIngress = laneIngressNode(ingress, routeHostLaneId, host, hostRecords);
@@ -628,7 +648,7 @@ export function buildNamespaceTrafficGraph(
       }
     }
 
-    if (routeEdges.length === 0) {
+    if (routeEdges.length === 0 && !lanes) {
       const serviceEdges = outgoingEdges(ingress.id, ['routes']);
       for (const serviceEdge of serviceEdges) {
         const service = nodeById.get(serviceEdge.target);
@@ -685,9 +705,12 @@ export function buildNamespaceTrafficGraph(
 
     const recordsByHostLane = new Map<string, ExternalRouteRecord[]>();
     for (const record of routeRecords) {
-      recordsByHostLane.set(record.hostLaneId, [...(recordsByHostLane.get(record.hostLaneId) ?? []), record]);
+      appendTo(recordsByHostLane, record.hostLaneId, record);
     }
     for (const [hostLaneId, records] of recordsByHostLane) {
+      if (!drawsLane(hostLaneId)) {
+        continue;
+      }
       const laneGateway = laneNode(gateway, hostLaneId);
       addNode(laneGateway);
 
@@ -733,14 +756,19 @@ export function buildNamespaceTrafficGraph(
 
     for (const host of routeHosts) {
       const hostLaneId = ingressHostLaneId(f5Namespace, f5, host);
+      const drawn = drawsLane(hostLaneId);
       const laneF5 = laneNode(f5, hostLaneId);
-      addNode(laneF5);
+      if (drawn) {
+        addNode(laneF5);
+      }
 
       if (services.length === 0) {
-        const missing = syntheticMissingServiceNode(f5Namespace, f5);
-        const laneMissing = laneNode(missing, hostLaneId);
-        addNode(laneMissing);
-        addEdge(laneEdge(laneF5, laneMissing, 'missing'));
+        if (drawn) {
+          const missing = syntheticMissingServiceNode(f5Namespace, f5);
+          const laneMissing = laneNode(missing, hostLaneId);
+          addNode(laneMissing);
+          addEdge(laneEdge(laneF5, laneMissing, 'missing'));
+        }
         routeItems.push(routeItemFromExternal(f5, f5, hostLaneId, host, '/'));
         continue;
       }
@@ -767,8 +795,10 @@ export function buildNamespaceTrafficGraph(
           kubectl: '',
           notes: [],
         });
-        const summarySource = { ...f5, id: itemId };
-        addServiceBranch(laneF5, service, hostLaneId, summarySource, 'balances');
+        if (drawn) {
+          const summarySource = { ...f5, id: itemId };
+          addServiceBranch(laneF5, service, hostLaneId, summarySource, 'balances');
+        }
       }
     }
   }

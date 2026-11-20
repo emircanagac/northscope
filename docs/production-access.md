@@ -144,8 +144,20 @@ This creates a Role and RoleBinding in `apps` for namespaced traffic resources. 
 
 ## Capacity Guidance
 
-The chart defaults are a starting point, not a universal production sizing target. Watch `northscope_snapshot_nodes`, `northscope_snapshot_edges`, `northscope_snapshot_build_duration_seconds`, process CPU, and memory under your real route count.
+The chart defaults are a starting point, not a universal production sizing target. Watch `northscope_snapshot_nodes`, `northscope_snapshot_edges`, the `northscope_snapshot_build_seconds` histogram, `northscope_snapshot_encoded_bytes`, process CPU, and memory under your real route count.
 
+Benchmarks of one snapshot build on generated ingress-nginx clusters (one Ingress per namespace, one host per Service), on a 16-thread desktop CPU with Go 1.27. Run them with `go test ./internal/k8s -run '^$' -bench . -benchmem`:
+
+| Cluster | Topology nodes | Build | Unchanged check | Full snapshot JSON | One-Pod delta JSON |
+| --- | --- | --- | --- | --- | --- |
+| 102 Pods, 51 Services | 279 | 1 ms | 0.14 ms | 210 KB | 0.6 KB |
+| 2,002 Pods, 501 Services | 3,654 | 11 ms | 1.9 ms | 2.8 MB | 0.6 KB |
+| 20,002 Pods, 2,001 Services, 200 Nodes | 26,604 | 105 ms | 16 ms | 20.7 MB | 0.6 KB |
+
+- A build runs at most once per 250 ms burst of changes, and at most 2 seconds after the first change of a continuous stream. Updates that cannot change the topology (status heartbeats, restart counts, annotation-only Endpoints and EndpointSlice changes, and resyncs) do not trigger one; `northscope_watch_events_total{event="ignored_update"}` counts them.
+- Browsers get a full snapshot when they connect and deltas afterwards. Compare `northscope_websocket_payload_bytes_total` by `type` to see what live updates cost.
+- Pods, Nodes, Endpoints, and EndpointSlices are trimmed before they are cached. A Node with a typical image list takes about 1.4 KB instead of 12 KB; Pods keep their identity, labels, node, IP, and status reasons.
+- In the UI, a 2,000-host list and the selected route's graph stayed below 50 ms per main-thread task while searching, selecting, and applying live deltas from a 20,000-Pod cluster.
 - Prefer `watchNamespace` when one team or application boundary is sufficient.
 - Increase CPU and memory requests before raising limits on large clusters.
 - Keep event coalescing enabled; unchanged snapshots are not sent to browsers.

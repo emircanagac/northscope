@@ -2,6 +2,10 @@ import type { TopologyEdge, TopologyNode } from './hooks/useTopologyStream';
 
 export type TopologyMode = 'simple' | 'expanded';
 
+// Size of a topology node card (KubeNode).
+export const NODE_CARD_WIDTH = 260;
+export const NODE_CARD_HEIGHT = 132;
+
 export interface RouteItem {
   id: string;
   topologyId: string;
@@ -68,11 +72,19 @@ export function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): To
   const columnGap = 340;
   const rowGap = mode === 'simple' ? 190 : 240;
   const columns = new Map<string, TopologyNode[]>();
+  const columnOf = (node: TopologyNode) => {
+    const kind = nodeColumn(node);
+    return columnOrder.includes(kind) ? kind : 'route';
+  };
 
   for (const node of nodes) {
-    const kind = nodeColumn(node);
-    const column = columnOrder.includes(kind) ? kind : 'route';
-    columns.set(column, [...(columns.get(column) ?? []), node]);
+    const column = columnOf(node);
+    const items = columns.get(column);
+    if (items) {
+      items.push(node);
+    } else {
+      columns.set(column, [node]);
+    }
   }
 
   const activeColumns = columnOrder.filter((column) => columns.has(column));
@@ -81,20 +93,34 @@ export function layoutTrafficPath(nodes: TopologyNode[], mode: TopologyMode): To
     return positions;
   }, {});
 
+  // Each column is sorted once, so finding a node's row is a map lookup
+  // instead of a sort per node.
+  const rowById = new Map<string, number>();
+  for (const columnNodes of columns.values()) {
+    columnNodes
+      .map((node) => ({
+        node,
+        lane: String(node.data.properties?.visualLane ?? ''),
+        name: nodeDisplayNameForLayout(node),
+      }))
+      .sort((left, right) => left.lane.localeCompare(right.lane) || left.name.localeCompare(right.name))
+      .forEach((item, index) => {
+        if (!rowById.has(item.node.id)) {
+          rowById.set(item.node.id, index);
+        }
+      });
+  }
+
   return nodes.map((node) => {
-    const kind = nodeColumn(node);
-    const column = columnOrder.includes(kind) ? kind : 'route';
-    const columnNodes = [...(columns.get(column) ?? [])].sort((left, right) => {
-      const leftLane = String(left.data.properties?.visualLane ?? '');
-      const rightLane = String(right.data.properties?.visualLane ?? '');
-      const laneOrder = leftLane.localeCompare(rightLane);
-      if (laneOrder !== 0) return laneOrder;
-      return nodeDisplayNameForLayout(left).localeCompare(nodeDisplayNameForLayout(right));
-    });
-    const rowIndex = Math.max(0, columnNodes.findIndex((item) => item.id === node.id));
+    const column = columnOf(node);
+    const rowIndex = rowById.get(node.id) ?? 0;
 
     return {
       ...node,
+      // Cards have a fixed size. Giving it up front lets the canvas fit and
+      // cull nodes before they are rendered and measured.
+      initialWidth: NODE_CARD_WIDTH,
+      initialHeight: NODE_CARD_HEIGHT,
       position: {
         x: columnX[column] ?? 0,
         y: rowIndex * rowGap,
@@ -141,20 +167,6 @@ export function severityRank(severity: string): number {
   return 3;
 }
 
-export function severityClass(severity: string): string {
-  const normalized = severity.toLowerCase();
-  if (normalized === 'error') {
-    return 'border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/45 dark:text-red-100';
-  }
-  if (normalized === 'warning') {
-    return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/45 dark:text-amber-100';
-  }
-  if (normalized === 'ok') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-100';
-  }
-  return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200';
-}
-
 export function routeGroupSeverity(group: RouteGroup): string {
   return group.routes.reduce((current, route) => {
     return severityRank(route.severity) < severityRank(current) ? route.severity : current;
@@ -175,18 +187,15 @@ export function routeGroupStatus(group: RouteGroup): string {
   return `${group.routes.length} paths`;
 }
 
-export function routeGroupButtonClass(group: RouteGroup, selected: boolean): string {
-  return [
-    'w-full rounded-md border px-3 py-2 text-left transition',
-    severityClass(routeGroupSeverity(group)),
-    selected ? 'border-blue-300 shadow-sm ring-2 ring-blue-100 dark:border-blue-500 dark:ring-blue-900/60' : '',
-  ].join(' ');
-}
-
 export function groupRoutes(routes: RouteItem[]): RouteGroup[] {
   const groups = new Map<string, RouteItem[]>();
   for (const route of routes) {
-    groups.set(route.ingressId, [...(groups.get(route.ingressId) ?? []), route]);
+    const items = groups.get(route.ingressId);
+    if (items) {
+      items.push(route);
+    } else {
+      groups.set(route.ingressId, [route]);
+    }
   }
   return Array.from(groups.entries())
     .sort(([, leftGroup], [, rightGroup]) => {
@@ -210,7 +219,12 @@ export function groupRoutes(routes: RouteItem[]): RouteGroup[] {
 export function groupRoutesByHost(routes: RouteItem[]): RouteHostGroup[] {
   const groups = new Map<string, RouteItem[]>();
   for (const route of routes) {
-    groups.set(route.hostLaneId, [...(groups.get(route.hostLaneId) ?? []), route]);
+    const items = groups.get(route.hostLaneId);
+    if (items) {
+      items.push(route);
+    } else {
+      groups.set(route.hostLaneId, [route]);
+    }
   }
   return Array.from(groups.entries())
     .sort(([, leftGroup], [, rightGroup]) => {
@@ -309,8 +323,8 @@ export function focusEdgesByRoute(edges: TopologyEdge[], selectedRouteIds: strin
       animated: Boolean(edge.animated && active),
       style: {
         ...(edge.style ?? {}),
-        strokeOpacity: active ? 0.95 : 0.16,
-        strokeWidth: active ? 2.6 : 1.2,
+        strokeOpacity: active ? 1 : 0.2,
+        strokeWidth: active ? 1.75 : 1,
       },
       zIndex: active ? 20 : 0,
     };
