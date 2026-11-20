@@ -69,7 +69,7 @@ NorthScope only uses `get`, `list`, and `watch`, and never reads Secrets or Pod 
 
 ## Status
 
-NorthScope 1.x follows semantic versioning: chart values, the HTTP API, and metric names change incompatibly only in a new major version. It has been validated on k3s with ingress-nginx and Traefik and benchmarked on generated clusters of up to 20,000 Pods, but there is no certified maximum cluster size yet. Real-cluster feedback and [bug reports](https://github.com/emircanagac/northscope/issues) are welcome.
+NorthScope 1.x follows semantic versioning: chart values, the HTTP API, and metric names change incompatibly only in a new major version. It has been validated on k3s 1.21 and 1.34 with ingress-nginx, HAProxy Kubernetes Ingress, and Traefik, and benchmarked on generated clusters of up to 20,000 Pods, but there is no certified maximum cluster size yet. Canary diagnostics follow ingress-nginx annotations. Real-cluster feedback and [bug reports](https://github.com/emircanagac/northscope/issues) are welcome.
 
 ## Documentation
 
