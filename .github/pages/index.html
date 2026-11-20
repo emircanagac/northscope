@@ -99,6 +99,19 @@
     th {
       background: #24272a;
     }
+    .screenshot {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 1.2em 0 0.4em;
+      border: 1px solid #3d4144;
+      border-radius: 6px;
+    }
+    .caption {
+      margin: 0 0 1em;
+      color: #a8adb0;
+      font-size: 0.875em;
+    }
     .notice {
       padding: 0.6em 0.9em;
       border: 1px solid #6b5d20;
@@ -136,9 +149,14 @@
     </p>
     <p>
       NorthScope only reads Kubernetes configuration. It does not capture traffic or test
-      connectivity. See the <a href="https://github.com/emircanagac/northscope#readme">README</a>
-      for a screenshot of the topology view.
+      connectivity.
     </p>
+    <a href="https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png">
+      <img class="screenshot" width="1440" height="760"
+        src="https://raw.githubusercontent.com/emircanagac/northscope/main/docs/assets/northscope-dark.png"
+        alt="NorthScope showing a host's route from the load balancer to Pods that are not ready, with the diagnosis and a kubectl command">
+    </a>
+    <p class="caption">The selected host's path on the right; the route is red because none of its Pods are ready.</p>
 
     <h2 id="install">Install</h2>
     <p>Add the chart repository and install the latest release:</p>
@@ -197,7 +215,8 @@ sha256sum -c northscope-@CHART_VERSION@.tgz.sha256</code></pre>
 
     <h2 id="status">Project status</h2>
     <p class="notice">
-      NorthScope 1.x follows semantic versioning for chart values, the HTTP API, and metric names. Topology data includes internal hostnames and IP
+      NorthScope 1.x follows semantic versioning for chart values, the HTTP API, and metric names. It has been
+      validated on k3s with ingress-nginx, HAProxy Kubernetes Ingress, and Traefik. Topology data includes internal hostnames and IP
       addresses, so protect access to the UI. Bug reports and feedback from real clusters are welcome on the
       <a href="https://github.com/emircanagac/northscope/issues">issue tracker</a>. Report security
       issues privately as described in the
