@@ -4,7 +4,7 @@ NorthScope is a read-only Kubernetes topology debugger. Security is especially i
 
 ## Supported Versions
 
-NorthScope is currently pre-beta and requires Kubernetes 1.20 or newer. Security fixes target the `main` branch and the latest published container image.
+NorthScope requires Kubernetes 1.20 or newer. Security fixes target the `main` branch and the latest published container image.
 
 ## Reporting a Vulnerability
 
